@@ -45,42 +45,5 @@ For a clean root URL, you can instead put `index.html` + `styles.css` at the rep
 root of a `username.github.io` repo. Add a `CNAME` file containing your custom
 domain to use `neomark.io`.
 
-## Deploy — Netlify
 
-Option A — drag & drop:
-
-1. Go to [https://app.netlify.com/drop](https://app.netlify.com/drop)
-2. Drag the `landing/` folder onto the page. Done.
-
-Option B — connect the repo:
-
-1. **Add new site → Import an existing project**, pick the repo.
-2. Build command: *(leave blank)* — it's static.
-3. Publish directory: `landing`
-4. Deploy. Add your custom domain under **Domain settings**.
-
-## Target keywords (primary intent)
-
-These are the queries the page is optimized to capture:
-
-- `Michigan Medicaid GLP-1 mandate 2026`
-- `Medicaid Ozempic Wegovy coverage 2026`
-- `Medicaid GLP-1 prior authorization BMI`
-- `MDHHS GLP-1 weight loss restriction`
-- `Zepbound Medicaid coverage 2026`
-- `Rybelsus Medicaid diabetes only`
-- `GLP-1 step therapy Medicaid by state`
-- `BMI 40 Medicaid GLP-1 prior authorization`
-- `BMI 35 comorbidity GLP-1 Medicaid`
-
-Keywords are seeded across the `<title>`, meta description, `<meta name="keywords">`,
-H1/H2 headings, FAQ questions, and the JSON-LD FAQ block (eligible for Google's
-FAQ rich result).
-
-## Post-launch SEO checklist
-
-- Submit the URL to Google Search Console and request indexing.
-- Validate structured data: [https://search.google.com/test/rich-results](https://search.google.com/test/rich-results)
-- Confirm mobile-friendliness and run Lighthouse (target 95+ performance/SEO).
-- Build a few inbound links (press, directories, the Snowflake listing page).
 
