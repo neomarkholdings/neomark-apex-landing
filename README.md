@@ -12,20 +12,7 @@ Snowflake Marketplace listing.
 
 
 There are **no external JS or CDN dependencies** — the page is intentionally
-static so it loads instantly (good Core Web Vitals = better SEO).
-
-## Before you publish
-
-1. **Swap the CTA URL.** Every "Access the Data instantly on Snowflake" button
-  currently points to the placeholder `https://app.snowflake.com/marketplace`.
-   Replace it with your real published listing URL once the Marketplace listing
-   is live (see `../MARKETPLACE_LISTING.md`). Search for the string in
-   `index.html` and replace all occurrences.
-2. **Set the real domain.** Replace `https://neomark.io/` in the `<link rel="canonical">`,
-  Open Graph, Twitter, and JSON-LD tags with your actual domain.
-3. **Add `og-image.png`** (recommended 1200×630) to this folder for rich social
-  previews. The tags already reference `og-image.png`.
-4. (Optional) Add a `favicon.ico` and a `sitemap.xml` / `robots.txt` at the site root.
+static so it loads instantly (good Core Web Vitals = better SEO)
 
 ## Deploy — GitHub Pages
 
