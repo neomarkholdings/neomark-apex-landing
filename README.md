@@ -1,6 +1,9 @@
-# Neomark Apex — SEO Landing Page 
+# Neomark Apex — SEO Landing Page + Samurai EDR
+
 2026 GLP-1 Medicaid coverage searches and routes traffic to the Neomark Apex
 Snowflake Marketplace listing.
+
+**Samurai** (`/samurai`) is the Ronin Softworx local EDR prototype: a Tauri v2 + React 19 console with the Amoeba restore engine. See [`samurai/README.md`](samurai/README.md).
 
 ## Files
 
@@ -9,6 +12,7 @@ Snowflake Marketplace listing.
 | ------------ | ------------------------------------------------------------------------------------------------------- |
 | `index.html` | The full page: SEO `<head>`, JSON-LD (Organization + Article + FAQ), semantic content, one primary CTA. |
 | `styles.css` | Dark theme (accent green `#22c55e` on `#0e1116`), mobile-responsive, no frameworks.                     |
+| `samurai/`   | Samurai / Amoeba desktop EDR prototype (Tauri + React + Tailwind).                                      |
 
 
 There are **no external JS or CDN dependencies** — the page is intentionally
