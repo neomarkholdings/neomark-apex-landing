@@ -1,0 +1,597 @@
+//! Samurai eradication engine — defensive scanners only.
+//!
+//! Invokes local CLI tools (`yara`, `clamscan`, `tshark`) when present, parses
+//! their output, and reduces it to a Threat Score (0–100) plus one sentence.
+//! Raw terminal dumps never reach the UI.
+
+use crate::amoeba_engine::{
+    known_antigen, load_immunity_db, remediate, seed_demo_lab, RepairOutcome, RemediateRequest,
+};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Harmless self-test marker used by the heuristic / YARA demo rule.
+pub const SELFTEST_ANTIGEN: &str = "SAMURAI-AMOEBA-ANTIGEN-SELFTEST";
+
+const YARA_RULE: &str = r#"
+rule Samurai_Selftest_Antigen
+{
+    meta:
+        description = "Harmless Samurai EDR self-test antigen"
+        author = "Ronin Softworx"
+    strings:
+        $a = "SAMURAI-AMOEBA-ANTIGEN-SELFTEST"
+    condition:
+        $a
+}
+"#;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreatBand {
+    Nominal,
+    Caution,
+    Critical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Finding {
+    pub engine: String,
+    pub detail: String,
+    pub path: Option<String>,
+    pub severity: Severity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineStatus {
+    pub name: String,
+    pub available: bool,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanReport {
+    pub threat_score: u8,
+    pub synthesis: String,
+    pub band: ThreatBand,
+    pub findings: Vec<Finding>,
+    pub engine_statuses: Vec<EngineStatus>,
+    pub auto_actions: Vec<RepairOutcome>,
+    pub streamer_mode: bool,
+    pub scanned_files: u32,
+    pub lab_path: Option<String>,
+}
+
+pub fn band_from_score(score: u8) -> ThreatBand {
+    match score {
+        0..=30 => ThreatBand::Nominal,
+        31..=70 => ThreatBand::Caution,
+        _ => ThreatBand::Critical,
+    }
+}
+
+pub fn compute_threat_score(findings: &[Finding]) -> u8 {
+    let mut score: i32 = 0;
+    for finding in findings {
+        score += match finding.severity {
+            Severity::Low => 8,
+            Severity::Medium => 18,
+            Severity::High => 32,
+            Severity::Critical => 48,
+        };
+    }
+    score.clamp(0, 100) as u8
+}
+
+pub fn synthesize(
+    score: u8,
+    findings: usize,
+    repaired: usize,
+    awaiting: usize,
+    streamer: bool,
+) -> String {
+    let core = match (score, findings, repaired, awaiting) {
+        (0..=5, 0, _, _) => {
+            "Chassis is sterile; Samurai reports no antigenic residue on this sweep."
+        }
+        (0..=30, _, _, _) => {
+            "Low-grade noise only; the silver line holds and no phagocytosis is required."
+        }
+        (_, _, n, _) if n > 0 && score <= 70 => {
+            "Amoeba ingested the anomaly and restored the host file from localized shadow stock."
+        }
+        (_, _, n, _) if n > 0 => {
+            "Critical signatures were cut down; Amoeba sealed the wound from shadow copies."
+        }
+        (_, _, _, n) if n > 0 => {
+            "Caution band: antigen traces are staged and Amoeba awaits explicit confirmation."
+        }
+        (31..=70, _, _, _) => {
+            "Caution band: antigen traces are present and awaiting macrophage action."
+        }
+        _ => "Critical incursion on the blood-red band; confirm phagocytosis to restore clean state.",
+    };
+    if streamer {
+        let trimmed = core.trim_end_matches('.');
+        format!("{trimmed}, with streamer shield masking path readout.")
+    } else {
+        core.to_string()
+    }
+}
+
+fn redact_path(path: &str, streamer: bool) -> String {
+    if !streamer {
+        return path.to_string();
+    }
+    Path::new(path)
+        .file_name()
+        .map(|n| format!("[STREAM-SHIELD]/{}", n.to_string_lossy()))
+        .unwrap_or_else(|| "[STREAM-SHIELD]".into())
+}
+
+fn tool_available(bin: &str) -> bool {
+    Command::new(bin).arg("--version").output().is_ok()
+        || Command::new(bin).arg("-v").output().is_ok()
+}
+
+fn collect_files(root: &Path, max_files: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if root.is_file() {
+        out.push(root.to_path_buf());
+        return out;
+    }
+    let mut stack = vec![(root.to_path_buf(), 0u8)];
+    while let Some((dir, depth)) = stack.pop() {
+        if out.len() >= max_files || depth > 6 {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == ".amoeba_shadow" || name == "quarantine" || name == "immunity_db.json" {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push((path, depth.saturating_add(1)));
+            } else if path.is_file() {
+                out.push(path);
+                if out.len() >= max_files {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn heuristic_scan(files: &[PathBuf], immunity: &Path, streamer: bool) -> Vec<Finding> {
+    let db = load_immunity_db(immunity);
+    let mut findings = Vec::new();
+    for path in files {
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        if bytes.len() > 512_000 {
+            continue;
+        }
+        let shown = redact_path(&path.to_string_lossy(), streamer);
+        let digest = crate::amoeba_engine::sha256_bytes(&bytes);
+        if known_antigen(&db, &digest) {
+            findings.push(Finding {
+                engine: "heuristic".into(),
+                detail: "Known antigen hash matched local immunity_db.json.".into(),
+                path: Some(shown.clone()),
+                severity: Severity::High,
+            });
+        }
+        if bytes
+            .windows(SELFTEST_ANTIGEN.len())
+            .any(|w| w == SELFTEST_ANTIGEN.as_bytes())
+        {
+            findings.push(Finding {
+                engine: "heuristic".into(),
+                detail: "Self-test antigen string located in host file.".into(),
+                path: Some(shown),
+                severity: Severity::Critical,
+            });
+        }
+    }
+    findings
+}
+
+fn run_yara(target: &Path, data_dir: &Path, streamer: bool) -> (EngineStatus, Vec<Finding>) {
+    let available = tool_available("yara") || which_exists("yara");
+    if !available {
+        return (
+            EngineStatus {
+                name: "yara".into(),
+                available: false,
+                summary: "YARA binary not present on PATH.".into(),
+            },
+            Vec::new(),
+        );
+    }
+    let rule_path = data_dir.join("samurai_selftest.yar");
+    if fs::write(&rule_path, YARA_RULE).is_err() {
+        return (
+            EngineStatus {
+                name: "yara".into(),
+                available: true,
+                summary: "Unable to stage self-test rule file.".into(),
+            },
+            Vec::new(),
+        );
+    }
+    let output = Command::new("yara")
+        .arg("-r")
+        .arg(&rule_path)
+        .arg(target)
+        .output();
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut findings = Vec::new();
+            for line in stdout.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let mut parts = line.splitn(2, char::is_whitespace);
+                let rule = parts.next().unwrap_or("yara");
+                let hit_path = parts.next().unwrap_or("").trim();
+                findings.push(Finding {
+                    engine: "yara".into(),
+                    detail: format!("Rule {rule} matched."),
+                    path: if hit_path.is_empty() {
+                        None
+                    } else {
+                        Some(redact_path(hit_path, streamer))
+                    },
+                    severity: Severity::High,
+                });
+            }
+            (
+                EngineStatus {
+                    name: "yara".into(),
+                    available: true,
+                    summary: format!("{} rule hit(s) parsed.", findings.len()),
+                },
+                findings,
+            )
+        }
+        Err(_) => (
+            EngineStatus {
+                name: "yara".into(),
+                available: false,
+                summary: "YARA invocation failed.".into(),
+            },
+            Vec::new(),
+        ),
+    }
+}
+
+fn run_clamav(target: &Path, streamer: bool) -> (EngineStatus, Vec<Finding>) {
+    let bin = if which_exists("clamscan") {
+        "clamscan"
+    } else {
+        return (
+            EngineStatus {
+                name: "clamav".into(),
+                available: false,
+                summary: "clamscan binary not present on PATH.".into(),
+            },
+            Vec::new(),
+        );
+    };
+    let output = Command::new(bin)
+        .args(["-i", "--no-summary", "--max-filesize=8M", "--max-scansize=16M"])
+        .arg(target)
+        .output();
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut findings = Vec::new();
+            for line in stdout.lines() {
+                if let Some(idx) = line.rfind(" FOUND") {
+                    let head = &line[..idx];
+                    let (hit_path, sig) = match head.rsplit_once(':') {
+                        Some((p, s)) => (p.trim(), s.trim()),
+                        None => (head.trim(), "clamav"),
+                    };
+                    findings.push(Finding {
+                        engine: "clamav".into(),
+                        detail: format!("Signature {sig}."),
+                        path: Some(redact_path(hit_path, streamer)),
+                        severity: Severity::Critical,
+                    });
+                }
+            }
+            (
+                EngineStatus {
+                    name: "clamav".into(),
+                    available: true,
+                    summary: format!("{} detection(s) parsed.", findings.len()),
+                },
+                findings,
+            )
+        }
+        Err(_) => (
+            EngineStatus {
+                name: "clamav".into(),
+                available: false,
+                summary: "clamscan invocation failed.".into(),
+            },
+            Vec::new(),
+        ),
+    }
+}
+
+fn run_tshark(streamer: bool) -> (EngineStatus, Vec<Finding>) {
+    if streamer {
+        return (
+            EngineStatus {
+                name: "tshark".into(),
+                available: which_exists("tshark"),
+                summary: "Streamer shield suppressed packet telemetry.".into(),
+            },
+            Vec::new(),
+        );
+    }
+    if !which_exists("tshark") {
+        return (
+            EngineStatus {
+                name: "tshark".into(),
+                available: false,
+                summary: "tshark binary not present on PATH.".into(),
+            },
+            Vec::new(),
+        );
+    }
+    // Protocol names only — never dump payloads or apply user-supplied capture filters.
+    let output = Command::new("tshark")
+        .args(["-c", "12", "-T", "fields", "-e", "frame.protocols"])
+        .output();
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let protocols: Vec<&str> = stdout
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            let unusual = protocols
+                .iter()
+                .filter(|p| p.contains("data") && p.split(':').count() > 4)
+                .count();
+            let mut findings = Vec::new();
+            if unusual >= 8 {
+                findings.push(Finding {
+                    engine: "tshark".into(),
+                    detail: "Dense unstructured protocol burst on local capture.".into(),
+                    path: None,
+                    severity: Severity::Low,
+                });
+            }
+            (
+                EngineStatus {
+                    name: "tshark".into(),
+                    available: true,
+                    summary: format!("{} protocol frames sampled.", protocols.len()),
+                },
+                findings,
+            )
+        }
+        Err(_) => (
+            EngineStatus {
+                name: "tshark".into(),
+                available: false,
+                summary: "tshark invocation failed or lacked capture privilege.".into(),
+            },
+            Vec::new(),
+        ),
+    }
+}
+
+fn which_exists(bin: &str) -> bool {
+    let probe = if cfg!(windows) { "where" } else { "which" };
+    Command::new(probe)
+        .arg(bin)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn unique_finding_paths(findings: &[Finding]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for finding in findings {
+        if let Some(path) = &finding.path {
+            if !path.starts_with("[STREAM-SHIELD]") && !paths.iter().any(|p| p == path) {
+                paths.push(path.clone());
+            }
+        }
+    }
+    paths
+}
+
+pub fn run_scan(
+    target_path: Option<String>,
+    streamer_mode: bool,
+    auto_repair: bool,
+    data_dir: &Path,
+    immunity_db: &Path,
+) -> Result<ScanReport, String> {
+    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let lab = seed_demo_lab(data_dir)?;
+    let target = match target_path {
+        Some(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
+        _ => lab.clone(),
+    };
+    if !target.exists() {
+        return Err(format!(
+            "Scan target does not exist: {}",
+            target.to_string_lossy()
+        ));
+    }
+
+    let files = collect_files(&target, 400);
+    let mut findings = heuristic_scan(&files, immunity_db, streamer_mode);
+    let mut statuses = vec![EngineStatus {
+        name: "heuristic".into(),
+        available: true,
+        summary: format!("Inspected {} file(s).", files.len()),
+    }];
+
+    let (yara_status, yara_hits) = run_yara(&target, data_dir, streamer_mode);
+    statuses.push(yara_status);
+    findings.extend(yara_hits);
+
+    let (clam_status, clam_hits) = run_clamav(&target, streamer_mode);
+    statuses.push(clam_status);
+    findings.extend(clam_hits);
+
+    let (tshark_status, tshark_hits) = run_tshark(streamer_mode);
+    statuses.push(tshark_status);
+    findings.extend(tshark_hits);
+
+    let mut auto_actions = Vec::new();
+    if !findings.is_empty() {
+        // Repair uses real paths. When streamer mode redacted them, resolve via lab files.
+        let candidates: Vec<PathBuf> = if streamer_mode {
+            files
+                .iter()
+                .filter(|p| {
+                    findings.iter().any(|f| {
+                        f.path.as_ref().is_some_and(|shown| {
+                            p.file_name()
+                                .map(|n| shown.ends_with(&*n.to_string_lossy()))
+                                .unwrap_or(false)
+                        })
+                    })
+                })
+                .cloned()
+                .collect()
+        } else {
+            unique_finding_paths(&findings)
+                .into_iter()
+                .map(PathBuf::from)
+                .collect()
+        };
+
+        for path in candidates {
+            let engine_tag = findings
+                .iter()
+                .find(|f| {
+                    f.path.as_ref().is_some_and(|p| {
+                        p == &path.to_string_lossy()
+                            || path
+                                .file_name()
+                                .is_some_and(|n| p.ends_with(&*n.to_string_lossy()))
+                    })
+                })
+                .map(|f| f.engine.as_str())
+                .unwrap_or("heuristic");
+            auto_actions.push(remediate(RemediateRequest {
+                target: &path,
+                auto_repair,
+                confirmed: false,
+                immunity_db,
+                engine_tag,
+                redact_paths: streamer_mode,
+            }));
+        }
+    }
+
+    let repaired = auto_actions
+        .iter()
+        .filter(|a| matches!(a, RepairOutcome::Repaired { .. }))
+        .count();
+    let awaiting = auto_actions
+        .iter()
+        .filter(|a| matches!(a, RepairOutcome::AwaitingConfirmation { .. }))
+        .count();
+
+    let mut score = compute_threat_score(&findings);
+    if repaired > 0 && awaiting == 0 {
+        score = score.saturating_sub(40).max(8);
+    }
+
+    Ok(ScanReport {
+        threat_score: score,
+        synthesis: synthesize(
+            score,
+            findings.len(),
+            repaired,
+            awaiting,
+            streamer_mode,
+        ),
+        band: band_from_score(score),
+        findings,
+        engine_statuses: statuses,
+        auto_actions,
+        streamer_mode,
+        scanned_files: files.len() as u32,
+        lab_path: Some(lab.to_string_lossy().into_owned()),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_findings_are_nominal_zero() {
+        assert_eq!(compute_threat_score(&[]), 0);
+        assert_eq!(band_from_score(0), ThreatBand::Nominal);
+        assert_eq!(band_from_score(31), ThreatBand::Caution);
+        assert_eq!(band_from_score(71), ThreatBand::Critical);
+    }
+
+    #[test]
+    fn score_clamps_at_one_hundred() {
+        let findings = vec![
+            Finding {
+                engine: "t".into(),
+                detail: "a".into(),
+                path: None,
+                severity: Severity::Critical,
+            },
+            Finding {
+                engine: "t".into(),
+                detail: "b".into(),
+                path: None,
+                severity: Severity::Critical,
+            },
+            Finding {
+                engine: "t".into(),
+                detail: "c".into(),
+                path: None,
+                severity: Severity::Critical,
+            },
+        ];
+        assert_eq!(compute_threat_score(&findings), 100);
+    }
+
+    #[test]
+    fn synthesis_is_a_single_core_sentence_without_streamer() {
+        let text = synthesize(0, 0, 0, 0, false);
+        assert!(!text.contains('\n'));
+        assert!(text.contains("sterile"));
+    }
+}
