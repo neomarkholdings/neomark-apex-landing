@@ -229,29 +229,48 @@ pub fn remediate(req: RemediateRequest<'_>) -> RepairOutcome {
     }
 }
 
-pub fn seed_demo_lab(data_dir: &Path) -> Result<PathBuf, String> {
+fn write_if_missing(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
+/// Creates the demo lab if needed, but never re-infects a host file that
+/// Amoeba has already restored (or that the operator has otherwise replaced).
+pub fn ensure_demo_lab(data_dir: &Path) -> Result<PathBuf, String> {
     let lab = data_dir.join("scan_lab");
     fs::create_dir_all(lab.join(".amoeba_shadow")).map_err(|e| e.to_string())?;
     fs::create_dir_all(lab.join("Music")).map_err(|e| e.to_string())?;
     fs::create_dir_all(lab.join("Studio-Projects")).map_err(|e| e.to_string())?;
 
-    fs::write(lab.join("ok.txt"), b"nominal chassis telemetry\n").map_err(|e| e.to_string())?;
-    fs::write(
-        lab.join(".amoeba_shadow").join("tainted.txt"),
+    write_if_missing(&lab.join("ok.txt"), b"nominal chassis telemetry\n")?;
+    write_if_missing(
+        &lab.join(".amoeba_shadow").join("tainted.txt"),
         b"sterile payload restored by amoeba\n",
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
+    write_if_missing(
+        &lab.join("tainted.txt"),
+        format!("demo {}\n", crate::samurai_engine::SELFTEST_ANTIGEN).as_bytes(),
+    )?;
+    write_if_missing(&lab.join("Music").join("session.wav"), b"RIFFDEMO")?;
+    write_if_missing(
+        &lab.join("neomark-holdings.txt"),
+        b"protected corporate sector\n",
+    )?;
+    write_if_missing(&lab.join("retroblazed-mix.wav"), b"RIFFDEMO")?;
+    write_if_missing(&lab.join("Studio-Projects").join("track.aiff"), b"FORMDEMO")?;
+    Ok(lab)
+}
+
+/// Explicit reset used at boot: always replants the harmless self-test antigen.
+pub fn seed_demo_lab(data_dir: &Path) -> Result<PathBuf, String> {
+    let lab = ensure_demo_lab(data_dir)?;
     fs::write(
         lab.join("tainted.txt"),
         format!("demo {}\n", crate::samurai_engine::SELFTEST_ANTIGEN).as_bytes(),
     )
     .map_err(|e| e.to_string())?;
-    fs::write(lab.join("Music").join("session.wav"), b"RIFFDEMO").map_err(|e| e.to_string())?;
-    fs::write(lab.join("neomark-holdings.txt"), b"protected corporate sector\n")
-        .map_err(|e| e.to_string())?;
-    fs::write(lab.join("retroblazed-mix.wav"), b"RIFFDEMO").map_err(|e| e.to_string())?;
-    fs::write(lab.join("Studio-Projects").join("track.aiff"), b"FORMDEMO")
-        .map_err(|e| e.to_string())?;
     Ok(lab)
 }
 
@@ -348,5 +367,30 @@ mod tests {
         let stored = load_immunity_db(&db);
         assert_eq!(stored.antigens.len(), 1);
         assert_eq!(stored.antigens[0].engine, "heuristic");
+    }
+
+    #[test]
+    fn ensure_demo_lab_does_not_revive_restored_host() {
+        let root = unique_dir("ensure");
+        let lab = seed_demo_lab(&root).unwrap();
+        fs::write(lab.join("tainted.txt"), b"already-restored\n").unwrap();
+        ensure_demo_lab(&root).unwrap();
+        assert_eq!(
+            fs::read_to_string(lab.join("tainted.txt")).unwrap(),
+            "already-restored\n"
+        );
+    }
+
+    #[test]
+    fn seed_demo_lab_replants_selftest_antigen() {
+        let root = unique_dir("reseed");
+        let lab = seed_demo_lab(&root).unwrap();
+        fs::write(lab.join("tainted.txt"), b"already-restored\n").unwrap();
+        seed_demo_lab(&root).unwrap();
+        assert!(
+            fs::read_to_string(lab.join("tainted.txt"))
+                .unwrap()
+                .contains("SAMURAI-AMOEBA-ANTIGEN-SELFTEST")
+        );
     }
 }
