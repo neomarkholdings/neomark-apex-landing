@@ -1,0 +1,39 @@
+name: Samurai CI
+
+on:
+  pull_request:
+    paths:
+      - "samurai/**"
+      - ".github/workflows/samurai-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-deb:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: samurai
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux WebKit dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+        working-directory: .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: samurai/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./samurai/src-tauri -> target"
+      - run: npm ci
+      - run: npx tauri build --bundles deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: samurai-linux-deb
+          path: samurai/src-tauri/target/release/bundle/deb/*.deb
