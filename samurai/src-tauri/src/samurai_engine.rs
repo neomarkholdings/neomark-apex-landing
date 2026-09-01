@@ -5,8 +5,9 @@
 //! Raw terminal dumps never reach the UI.
 
 use crate::amoeba_engine::{
-    known_antigen, load_immunity_db, remediate, seed_demo_lab, RepairOutcome, RemediateRequest,
+    ensure_demo_lab, known_antigen, load_immunity_db, remediate, RepairOutcome, RemediateRequest,
 };
+use crate::sanctuary::{is_sanctuary, ERR_SANCTUARY_ZONE};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -102,8 +103,21 @@ pub fn synthesize(
     findings: usize,
     repaired: usize,
     awaiting: usize,
+    aborted: usize,
     streamer: bool,
 ) -> String {
+    if aborted > 0 {
+        let core =
+            "Sanctuary sector locked; Samurai will not rewrite, quarantine, or restore inside the creations vault.";
+        return if streamer {
+            format!(
+                "{}, with streamer shield masking path readout.",
+                core.trim_end_matches('.')
+            )
+        } else {
+            core.to_string()
+        };
+    }
     let core = match (score, findings, repaired, awaiting) {
         (0..=5, 0, _, _) => {
             "Chassis is sterile; Samurai reports no antigenic residue on this sweep."
@@ -366,7 +380,16 @@ fn run_tshark(streamer: bool) -> (EngineStatus, Vec<Finding>) {
     }
     // Protocol names only — never dump payloads or apply user-supplied capture filters.
     let output = Command::new("tshark")
-        .args(["-c", "12", "-T", "fields", "-e", "frame.protocols"])
+        .args([
+            "-c",
+            "12",
+            "-a",
+            "duration:3",
+            "-T",
+            "fields",
+            "-e",
+            "frame.protocols",
+        ])
         .output();
     match output {
         Ok(out) => {
@@ -438,7 +461,7 @@ pub fn run_scan(
     immunity_db: &Path,
 ) -> Result<ScanReport, String> {
     fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
-    let lab = seed_demo_lab(data_dir)?;
+    let lab = ensure_demo_lab(data_dir)?;
     let target = match target_path {
         Some(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
         _ => lab.clone(),
@@ -471,7 +494,12 @@ pub fn run_scan(
     findings.extend(tshark_hits);
 
     let mut auto_actions = Vec::new();
-    if !findings.is_empty() {
+    if is_sanctuary(&target) {
+        auto_actions.push(RepairOutcome::SanctuaryAbort {
+            path: redact_path(&target.to_string_lossy(), streamer_mode),
+            message: ERR_SANCTUARY_ZONE.to_string(),
+        });
+    } else if !findings.is_empty() {
         // Repair uses real paths. When streamer mode redacted them, resolve via lab files.
         let candidates: Vec<PathBuf> = if streamer_mode {
             files
@@ -526,9 +554,15 @@ pub fn run_scan(
         .iter()
         .filter(|a| matches!(a, RepairOutcome::AwaitingConfirmation { .. }))
         .count();
+    let aborted = auto_actions
+        .iter()
+        .filter(|a| matches!(a, RepairOutcome::SanctuaryAbort { .. }))
+        .count();
 
     let mut score = compute_threat_score(&findings);
-    if repaired > 0 && awaiting == 0 {
+    if aborted > 0 && findings.is_empty() {
+        score = 0;
+    } else if repaired > 0 && awaiting == 0 {
         score = score.saturating_sub(40).max(8);
     }
 
@@ -539,6 +573,7 @@ pub fn run_scan(
             findings.len(),
             repaired,
             awaiting,
+            aborted,
             streamer_mode,
         ),
         band: band_from_score(score),
@@ -554,6 +589,10 @@ pub fn run_scan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::amoeba_engine::RepairOutcome;
+    use crate::sanctuary::ERR_SANCTUARY_ZONE;
+    use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn empty_findings_are_nominal_zero() {
@@ -590,8 +629,137 @@ mod tests {
 
     #[test]
     fn synthesis_is_a_single_core_sentence_without_streamer() {
-        let text = synthesize(0, 0, 0, 0, false);
+        let text = synthesize(0, 0, 0, 0, 0, false);
         assert!(!text.contains('\n'));
         assert!(text.contains("sterile"));
+    }
+
+    #[test]
+    fn synthesis_locks_when_sanctuary_aborts() {
+        let text = synthesize(78, 2, 0, 0, 1, false);
+        assert!(text.contains("Sanctuary sector locked"));
+        assert!(!text.contains("incursion"));
+    }
+
+    fn temp_lab(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "samurai-scan-{}-{}-{}",
+            label,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn second_scan_stays_clean_after_auto_repair() {
+        let root = temp_lab("clean-second");
+        let immunity = root.join("immunity_db.json");
+        let first = run_scan(None, false, true, &root, &immunity).expect("first scan");
+        assert!(
+            first
+                .auto_actions
+                .iter()
+                .any(|action| matches!(action, RepairOutcome::Repaired { .. })),
+            "first scan should auto-repair, got {:?}",
+            first.auto_actions
+        );
+        let host = fs::read_to_string(root.join("scan_lab").join("tainted.txt")).unwrap();
+        assert!(
+            !host.contains(SELFTEST_ANTIGEN),
+            "host still dirty after auto-repair: {host}"
+        );
+
+        let second = run_scan(None, false, true, &root, &immunity).expect("second scan");
+        assert!(
+            second
+                .findings
+                .iter()
+                .all(|finding| !finding.detail.contains("Self-test antigen")),
+            "second scan re-detected the antigen: {:?}",
+            second.findings
+        );
+        assert!(
+            second.auto_actions.is_empty(),
+            "second scan should not remediate: {:?}",
+            second.auto_actions
+        );
+        assert!(second.threat_score <= 30);
+    }
+
+    #[test]
+    fn ask_mode_leaves_host_dirty_until_confirmed() {
+        let root = temp_lab("ask");
+        let immunity = root.join("immunity_db.json");
+        let report = run_scan(None, false, false, &root, &immunity).expect("ask scan");
+        assert!(
+            report
+                .auto_actions
+                .iter()
+                .any(|action| matches!(action, RepairOutcome::AwaitingConfirmation { .. })),
+            "expected awaiting confirmation, got {:?}",
+            report.auto_actions
+        );
+        let host = fs::read_to_string(root.join("scan_lab").join("tainted.txt")).unwrap();
+        assert!(host.contains(SELFTEST_ANTIGEN));
+        assert!(!immunity.exists());
+    }
+
+    #[test]
+    fn sanctuary_target_aborts_and_does_not_touch_files() {
+        let root = temp_lab("scan-music");
+        let music_dir = root.join("Music");
+        fs::create_dir_all(&music_dir).unwrap();
+        let vocal = music_dir.join("vocal.wav");
+        fs::write(&vocal, b"do-not-touch").unwrap();
+        let immunity = root.join("immunity_db.json");
+        let report = run_scan(
+            Some(music_dir.to_string_lossy().into_owned()),
+            false,
+            true,
+            &root,
+            &immunity,
+        )
+        .expect("sanctuary scan");
+        assert!(
+            report.auto_actions.iter().any(|action| matches!(
+                action,
+                RepairOutcome::SanctuaryAbort { message, .. } if message == ERR_SANCTUARY_ZONE
+            )),
+            "expected sanctuary abort, got {:?}",
+            report.auto_actions
+        );
+        assert_eq!(fs::read(&vocal).unwrap(), b"do-not-touch");
+        assert!(!immunity.exists());
+        assert_eq!(report.threat_score, 0);
+        assert!(report.synthesis.contains("Sanctuary sector locked"));
+    }
+
+    #[test]
+    fn streamer_mode_redacts_paths_and_notes_shield() {
+        let root = temp_lab("stream");
+        let immunity = root.join("immunity_db.json");
+        let report = run_scan(None, true, true, &root, &immunity).expect("streamer scan");
+        for finding in &report.findings {
+            if let Some(path) = &finding.path {
+                assert!(
+                    path.starts_with("[STREAM-SHIELD]"),
+                    "unredacted finding path: {path}"
+                );
+                assert!(!path.contains("scan_lab"), "lab path leaked: {path}");
+            }
+        }
+        let tshark = report
+            .engine_statuses
+            .iter()
+            .find(|engine| engine.name == "tshark")
+            .expect("tshark status");
+        assert!(tshark.summary.contains("Streamer shield"));
+        assert!(report.synthesis.contains("streamer shield"));
     }
 }

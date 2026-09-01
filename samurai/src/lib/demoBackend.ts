@@ -45,7 +45,7 @@ function shaLike(seed: string): string {
 
 async function pause(ms: number): Promise<void> {
   await new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
+    setTimeout(resolve, ms);
   });
 }
 
@@ -104,8 +104,7 @@ function buildScan(targetPath?: string | null): ScanReport {
       path: redact(customTarget),
       message: SANCTUARY_ABORT,
     });
-  } else if (!customTarget) {
-    memory.taintedDirty = true;
+  } else if (!customTarget && memory.taintedDirty) {
     findings.push({
       engine: "heuristic",
       detail: "Self-test antigen string located in host file.",
@@ -204,6 +203,7 @@ export async function demoInvoke<T>(
       return memory.flags.streamerMode as T;
     case "seed_demo_lab":
       memory.taintedDirty = true;
+      memory.antigens = [];
       return memory.labPath as T;
     case "get_immunity_log":
       return {
