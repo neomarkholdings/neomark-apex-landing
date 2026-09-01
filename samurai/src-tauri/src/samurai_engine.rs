@@ -158,11 +158,6 @@ fn redact_path(path: &str, streamer: bool) -> String {
         .unwrap_or_else(|| "[STREAM-SHIELD]".into())
 }
 
-fn tool_available(bin: &str) -> bool {
-    Command::new(bin).arg("--version").output().is_ok()
-        || Command::new(bin).arg("-v").output().is_ok()
-}
-
 fn collect_files(root: &Path, max_files: usize) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if root.is_file() {
@@ -231,18 +226,22 @@ fn heuristic_scan(files: &[PathBuf], immunity: &Path, streamer: bool) -> Vec<Fin
     findings
 }
 
-fn run_yara(target: &Path, data_dir: &Path, streamer: bool) -> (EngineStatus, Vec<Finding>) {
-    let available = tool_available("yara") || which_exists("yara");
-    if !available {
+fn run_yara(
+    target: &Path,
+    data_dir: &Path,
+    streamer: bool,
+    tools_dir: &Path,
+) -> (EngineStatus, Vec<Finding>) {
+    let Some(bin) = resolve_tool("yara", tools_dir) else {
         return (
             EngineStatus {
                 name: "yara".into(),
                 available: false,
-                summary: "YARA binary not present on PATH.".into(),
+                summary: "YARA is not bundled and not present on PATH.".into(),
             },
             Vec::new(),
         );
-    }
+    };
     let rule_path = data_dir.join("samurai_selftest.yar");
     if fs::write(&rule_path, YARA_RULE).is_err() {
         return (
@@ -254,7 +253,7 @@ fn run_yara(target: &Path, data_dir: &Path, streamer: bool) -> (EngineStatus, Ve
             Vec::new(),
         );
     }
-    let output = Command::new("yara")
+    let output = command_for_tool(&bin)
         .arg("-r")
         .arg(&rule_path)
         .arg(target)
@@ -302,23 +301,24 @@ fn run_yara(target: &Path, data_dir: &Path, streamer: bool) -> (EngineStatus, Ve
     }
 }
 
-fn run_clamav(target: &Path, streamer: bool) -> (EngineStatus, Vec<Finding>) {
-    let bin = if which_exists("clamscan") {
-        "clamscan"
-    } else {
+fn run_clamav(target: &Path, streamer: bool, tools_dir: &Path) -> (EngineStatus, Vec<Finding>) {
+    let Some(bin) = resolve_tool("clamscan", tools_dir) else {
         return (
             EngineStatus {
                 name: "clamav".into(),
                 available: false,
-                summary: "clamscan binary not present on PATH.".into(),
+                summary: "ClamAV is not bundled and not present on PATH.".into(),
             },
             Vec::new(),
         );
     };
-    let output = Command::new(bin)
-        .args(["-i", "--no-summary", "--max-filesize=8M", "--max-scansize=16M"])
-        .arg(target)
-        .output();
+    let mut cmd = command_for_tool(&bin);
+    cmd.args(["-i", "--no-summary", "--max-filesize=8M", "--max-scansize=16M"]);
+    let database = tools_dir.join("database");
+    if database.is_dir() {
+        cmd.arg("--database").arg(&database);
+    }
+    let output = cmd.arg(target).output();
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
@@ -358,29 +358,30 @@ fn run_clamav(target: &Path, streamer: bool) -> (EngineStatus, Vec<Finding>) {
     }
 }
 
-fn run_tshark(streamer: bool) -> (EngineStatus, Vec<Finding>) {
+fn run_tshark(streamer: bool, tools_dir: &Path) -> (EngineStatus, Vec<Finding>) {
+    let bundled = resolve_tool("tshark", tools_dir);
     if streamer {
         return (
             EngineStatus {
                 name: "tshark".into(),
-                available: which_exists("tshark"),
+                available: bundled.is_some(),
                 summary: "Streamer shield suppressed packet telemetry.".into(),
             },
             Vec::new(),
         );
     }
-    if !which_exists("tshark") {
+    let Some(bin) = bundled else {
         return (
             EngineStatus {
                 name: "tshark".into(),
                 available: false,
-                summary: "tshark binary not present on PATH.".into(),
+                summary: "tshark is not installed (packet capture is optional).".into(),
             },
             Vec::new(),
         );
-    }
+    };
     // Protocol names only — never dump payloads or apply user-supplied capture filters.
-    let output = Command::new("tshark")
+    let output = command_for_tool(&bin)
         .args([
             "-c",
             "12",
@@ -442,6 +443,65 @@ fn which_exists(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub fn resolve_tool(name: &str, tools_dir: &Path) -> Option<PathBuf> {
+    let file_name = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    let mut candidates = Vec::new();
+    if !tools_dir.as_os_str().is_empty() {
+        candidates.push(tools_dir.join(&file_name));
+        candidates.push(tools_dir.join(name));
+        candidates.push(tools_dir.join("bin").join(&file_name));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(&file_name));
+            candidates.push(dir.join("engines").join(&file_name));
+            if let Some(contents) = dir.parent() {
+                candidates.push(
+                    contents
+                        .join("Resources")
+                        .join("engines")
+                        .join(&file_name),
+                );
+            }
+        }
+    }
+    for path in candidates {
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if which_exists(name) {
+        Some(PathBuf::from(name))
+    } else {
+        None
+    }
+}
+
+fn command_for_tool(bin: &Path) -> Command {
+    let mut cmd = Command::new(bin);
+    if let Some(dir) = bin.parent() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let mut path_value = dir.to_string_lossy().into_owned();
+        if let Ok(existing) = std::env::var("PATH") {
+            path_value = format!("{path_value}{sep}{existing}");
+        }
+        cmd.env("PATH", path_value);
+        if cfg!(unix) {
+            let mut loader = dir.to_string_lossy().into_owned();
+            if let Ok(existing) = std::env::var("LD_LIBRARY_PATH") {
+                loader = format!("{loader}:{existing}");
+            }
+            cmd.env("LD_LIBRARY_PATH", &loader);
+            cmd.env("DYLD_LIBRARY_PATH", loader);
+        }
+    }
+    cmd
+}
+
 fn file_has_finding(path: &Path, findings: &[Finding]) -> bool {
     findings.iter().any(|finding| {
         finding.path.as_ref().is_some_and(|shown| {
@@ -480,6 +540,7 @@ pub fn run_scan(
     auto_repair: bool,
     data_dir: &Path,
     immunity_db: &Path,
+    tools_dir: &Path,
 ) -> Result<ScanReport, String> {
     fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let lab = ensure_demo_lab(data_dir)?;
@@ -502,15 +563,15 @@ pub fn run_scan(
         summary: format!("Inspected {} file(s).", files.len()),
     }];
 
-    let (yara_status, yara_hits) = run_yara(&target, data_dir, streamer_mode);
+    let (yara_status, yara_hits) = run_yara(&target, data_dir, streamer_mode, tools_dir);
     statuses.push(yara_status);
     findings.extend(yara_hits);
 
-    let (clam_status, clam_hits) = run_clamav(&target, streamer_mode);
+    let (clam_status, clam_hits) = run_clamav(&target, streamer_mode, tools_dir);
     statuses.push(clam_status);
     findings.extend(clam_hits);
 
-    let (tshark_status, tshark_hits) = run_tshark(streamer_mode);
+    let (tshark_status, tshark_hits) = run_tshark(streamer_mode, tools_dir);
     statuses.push(tshark_status);
     findings.extend(tshark_hits);
 
@@ -683,7 +744,7 @@ mod tests {
     fn second_scan_stays_clean_after_auto_repair() {
         let root = temp_lab("clean-second");
         let immunity = root.join("immunity_db.json");
-        let first = run_scan(None, false, true, &root, &immunity).expect("first scan");
+        let first = run_scan(None, false, true, &root, &immunity, &root.join("engines")).expect("first scan");
         assert!(
             first
                 .auto_actions
@@ -698,7 +759,7 @@ mod tests {
             "host still dirty after auto-repair: {host}"
         );
 
-        let second = run_scan(None, false, true, &root, &immunity).expect("second scan");
+        let second = run_scan(None, false, true, &root, &immunity, &root.join("engines")).expect("second scan");
         assert!(
             second
                 .findings
@@ -723,7 +784,7 @@ mod tests {
     fn ask_mode_leaves_host_dirty_until_confirmed() {
         let root = temp_lab("ask");
         let immunity = root.join("immunity_db.json");
-        let report = run_scan(None, false, false, &root, &immunity).expect("ask scan");
+        let report = run_scan(None, false, false, &root, &immunity, &root.join("engines")).expect("ask scan");
         assert!(
             report
                 .auto_actions
@@ -760,6 +821,7 @@ mod tests {
             false,
             &root,
             &immunity,
+            &root.join("engines"),
         )
         .expect("user folder scan");
         assert_eq!(
@@ -786,6 +848,7 @@ mod tests {
             true,
             &root,
             &immunity,
+            &root.join("engines"),
         )
         .expect("sanctuary scan");
         assert!(
@@ -807,7 +870,7 @@ mod tests {
     fn streamer_mode_redacts_paths_and_notes_shield() {
         let root = temp_lab("stream");
         let immunity = root.join("immunity_db.json");
-        let report = run_scan(None, true, true, &root, &immunity).expect("streamer scan");
+        let report = run_scan(None, true, true, &root, &immunity, &root.join("engines")).expect("streamer scan");
         for finding in &report.findings {
             if let Some(path) = &finding.path {
                 assert!(
@@ -824,5 +887,18 @@ mod tests {
             .expect("tshark status");
         assert!(tshark.summary.contains("Streamer shield"));
         assert!(report.synthesis.contains("streamer shield"));
+    }
+
+    #[test]
+    fn resolve_tool_prefers_bundled_binary() {
+        let root = temp_lab("tools");
+        let engines = root.join("engines");
+        fs::create_dir_all(&engines).unwrap();
+        let file_name = if cfg!(windows) { "yara.exe" } else { "yara" };
+        let tool = engines.join(file_name);
+        fs::write(&tool, b"not-a-real-yara").unwrap();
+        let resolved = resolve_tool("yara", &engines).expect("bundled yara");
+        assert_eq!(resolved, tool);
+        assert!(resolve_tool("definitely-missing-samurai-bin", &engines).is_none());
     }
 }

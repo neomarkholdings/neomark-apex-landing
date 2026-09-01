@@ -3,7 +3,7 @@
 2026 GLP-1 Medicaid coverage searches and routes traffic to the Neomark Apex
 Snowflake Marketplace listing.
 
-**Samurai** (`/samurai`) is the Ronin Softworx local EDR desktop app (Tauri). Run it with `cd samurai && npm run desktop`. See [`samurai/README.md`](samurai/README.md).
+**Samurai** (`/samurai`) is the Ronin Softworx local EDR desktop app. End users run a signed installer (YARA, ClamAV, and WebView2 are packaged). Developers run `cd samurai && npm run desktop`. See [`samurai/README.md`](samurai/README.md).
 
 ## Files
 

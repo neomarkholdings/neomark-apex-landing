@@ -48,6 +48,30 @@ fn immunity_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join("immunity_db.json"))
 }
 
+fn tools_dir(app: &AppHandle) -> PathBuf {
+    if let Ok(dir) = app.path().resource_dir() {
+        let engines = dir.join("engines");
+        if engines.is_dir() {
+            return engines;
+        }
+        let nested = dir.join("resources").join("engines");
+        if nested.is_dir() {
+            return nested;
+        }
+        if dir.join("yara").is_file()
+            || dir.join("yara.exe").is_file()
+            || dir.join("clamscan").is_file()
+            || dir.join("clamscan.exe").is_file()
+        {
+            return dir;
+        }
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|parent| parent.join("engines")))
+        .unwrap_or_else(|| PathBuf::from("engines"))
+}
+
 #[tauri::command]
 fn get_app_state(state: State<AppState>) -> AppFlags {
     AppFlags {
@@ -80,6 +104,7 @@ fn run_samurai_scan(
         read_flag(&state.amoeba_auto_repair),
         &dir,
         &immunity,
+        &tools_dir(&app),
     )
 }
 

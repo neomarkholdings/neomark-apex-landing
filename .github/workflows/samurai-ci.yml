@@ -17,10 +17,10 @@ jobs:
         working-directory: samurai
     steps:
       - uses: actions/checkout@v4
-      - name: Install Linux WebKit dependencies
+      - name: Install Linux WebKit and scan engines
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf yara clamav tshark unzip
         working-directory: .
       - uses: actions/setup-node@v4
         with:
@@ -33,6 +33,7 @@ jobs:
           workspaces: "./samurai/src-tauri -> target"
       - run: npm ci
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: node scripts/stage-engines.mjs --ci
       - run: npx tauri build --bundles deb
       - uses: actions/upload-artifact@v4
         with:
