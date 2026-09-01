@@ -4,7 +4,7 @@
 //! `{parent}/.amoeba_shadow/{filename}`. On Windows, a Volume Shadow Copy
 //! hook is reserved for the same restore path once a shadow candidate exists.
 
-use crate::sanctuary::assert_not_sanctuary;
+use crate::sanctuary::{assert_not_sanctuary, is_sanctuary};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -23,6 +23,8 @@ pub enum RepairOutcome {
     AwaitingConfirmation {
         path: String,
         message: String,
+        #[serde(rename = "restorePath")]
+        restore_path: String,
     },
     SanctuaryAbort {
         path: String,
@@ -66,6 +68,9 @@ pub struct RemediateRequest<'a> {
     pub engine_tag: &'a str,
     pub redact_paths: bool,
 }
+
+/// Maximum size of a localized restore point created during a clean sweep.
+pub const MAX_RESTORE_POINT_BYTES: u64 = 8 * 1024 * 1024;
 
 pub fn backup_reference(target: &Path) -> PathBuf {
     let file_name = target.file_name().unwrap_or_default();
@@ -154,6 +159,30 @@ pub fn present_antigen(
     fs::write(immunity_db, json).map_err(|e| format!("immunity_db write: {e}"))
 }
 
+/// Snapshot a clean host file beside the original. Never writes inside sanctuary
+/// sectors, never overwrites an existing shadow, and never copies a huge file.
+pub fn create_restore_point(target: &Path) -> Result<bool, String> {
+    if is_sanctuary(target) {
+        return Ok(false);
+    }
+    if !target.is_file() {
+        return Ok(false);
+    }
+    let meta = fs::metadata(target).map_err(|e| format!("restore-point stat: {e}"))?;
+    if meta.len() > MAX_RESTORE_POINT_BYTES {
+        return Ok(false);
+    }
+    let shadow = backup_reference(target);
+    if shadow.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = shadow.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("restore-point mkdir: {e}"))?;
+    }
+    fs::copy(target, &shadow).map_err(|e| format!("restore-point copy: {e}"))?;
+    Ok(true)
+}
+
 fn restore_clean_state(target: &Path, source: &Path) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("restore mkdir: {e}"))?;
@@ -175,6 +204,7 @@ pub fn remediate(req: RemediateRequest<'_>) -> RepairOutcome {
     if !req.auto_repair && !req.confirmed {
         return RepairOutcome::AwaitingConfirmation {
             path: shown,
+            restore_path: req.target.to_string_lossy().into_owned(),
             message: "Amoeba held. Antigen is staged; confirm phagocytosis to restore clean state."
                 .to_string(),
         };
@@ -229,29 +259,48 @@ pub fn remediate(req: RemediateRequest<'_>) -> RepairOutcome {
     }
 }
 
-pub fn seed_demo_lab(data_dir: &Path) -> Result<PathBuf, String> {
+fn write_if_missing(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
+/// Creates the demo lab if needed, but never re-infects a host file that
+/// Amoeba has already restored (or that the operator has otherwise replaced).
+pub fn ensure_demo_lab(data_dir: &Path) -> Result<PathBuf, String> {
     let lab = data_dir.join("scan_lab");
     fs::create_dir_all(lab.join(".amoeba_shadow")).map_err(|e| e.to_string())?;
     fs::create_dir_all(lab.join("Music")).map_err(|e| e.to_string())?;
     fs::create_dir_all(lab.join("Studio-Projects")).map_err(|e| e.to_string())?;
 
-    fs::write(lab.join("ok.txt"), b"nominal chassis telemetry\n").map_err(|e| e.to_string())?;
-    fs::write(
-        lab.join(".amoeba_shadow").join("tainted.txt"),
+    write_if_missing(&lab.join("ok.txt"), b"nominal chassis telemetry\n")?;
+    write_if_missing(
+        &lab.join(".amoeba_shadow").join("tainted.txt"),
         b"sterile payload restored by amoeba\n",
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
+    write_if_missing(
+        &lab.join("tainted.txt"),
+        format!("demo {}\n", crate::samurai_engine::SELFTEST_ANTIGEN).as_bytes(),
+    )?;
+    write_if_missing(&lab.join("Music").join("session.wav"), b"RIFFDEMO")?;
+    write_if_missing(
+        &lab.join("neomark-holdings.txt"),
+        b"protected corporate sector\n",
+    )?;
+    write_if_missing(&lab.join("retroblazed-mix.wav"), b"RIFFDEMO")?;
+    write_if_missing(&lab.join("Studio-Projects").join("track.aiff"), b"FORMDEMO")?;
+    Ok(lab)
+}
+
+/// Explicit reset used at boot: always replants the harmless self-test antigen.
+pub fn seed_demo_lab(data_dir: &Path) -> Result<PathBuf, String> {
+    let lab = ensure_demo_lab(data_dir)?;
     fs::write(
         lab.join("tainted.txt"),
         format!("demo {}\n", crate::samurai_engine::SELFTEST_ANTIGEN).as_bytes(),
     )
     .map_err(|e| e.to_string())?;
-    fs::write(lab.join("Music").join("session.wav"), b"RIFFDEMO").map_err(|e| e.to_string())?;
-    fs::write(lab.join("neomark-holdings.txt"), b"protected corporate sector\n")
-        .map_err(|e| e.to_string())?;
-    fs::write(lab.join("retroblazed-mix.wav"), b"RIFFDEMO").map_err(|e| e.to_string())?;
-    fs::write(lab.join("Studio-Projects").join("track.aiff"), b"FORMDEMO")
-        .map_err(|e| e.to_string())?;
     Ok(lab)
 }
 
@@ -348,5 +397,58 @@ mod tests {
         let stored = load_immunity_db(&db);
         assert_eq!(stored.antigens.len(), 1);
         assert_eq!(stored.antigens[0].engine, "heuristic");
+    }
+
+    #[test]
+    fn ensure_demo_lab_does_not_revive_restored_host() {
+        let root = unique_dir("ensure");
+        let lab = seed_demo_lab(&root).unwrap();
+        fs::write(lab.join("tainted.txt"), b"already-restored\n").unwrap();
+        ensure_demo_lab(&root).unwrap();
+        assert_eq!(
+            fs::read_to_string(lab.join("tainted.txt")).unwrap(),
+            "already-restored\n"
+        );
+    }
+
+    #[test]
+    fn seed_demo_lab_replants_selftest_antigen() {
+        let root = unique_dir("reseed");
+        let lab = seed_demo_lab(&root).unwrap();
+        fs::write(lab.join("tainted.txt"), b"already-restored\n").unwrap();
+        seed_demo_lab(&root).unwrap();
+        assert!(
+            fs::read_to_string(lab.join("tainted.txt"))
+                .unwrap()
+                .contains("SAMURAI-AMOEBA-ANTIGEN-SELFTEST")
+        );
+    }
+
+    #[test]
+    fn restore_point_snapshots_clean_host_once() {
+        let root = unique_dir("shadow-clean");
+        let host = root.join("notes.txt");
+        fs::write(&host, b"keep-me").unwrap();
+        assert!(create_restore_point(&host).unwrap());
+        assert_eq!(
+            fs::read(root.join(".amoeba_shadow").join("notes.txt")).unwrap(),
+            b"keep-me"
+        );
+        fs::write(&host, b"changed").unwrap();
+        assert!(!create_restore_point(&host).unwrap());
+        assert_eq!(
+            fs::read(root.join(".amoeba_shadow").join("notes.txt")).unwrap(),
+            b"keep-me"
+        );
+    }
+
+    #[test]
+    fn restore_point_skips_sanctuary_hosts() {
+        let root = unique_dir("shadow-music");
+        let host = root.join("Music").join("vocal.wav");
+        fs::create_dir_all(host.parent().unwrap()).unwrap();
+        fs::write(&host, b"RIFF").unwrap();
+        assert!(!create_restore_point(&host).unwrap());
+        assert!(!root.join("Music").join(".amoeba_shadow").exists());
     }
 }

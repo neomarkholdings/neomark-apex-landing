@@ -1,19 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { demoInvoke } from "./demoBackend";
 import type { AppFlags, ImmunityDb, RepairOutcome, ScanReport } from "./types";
 
-function isTauriRuntime(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    "__TAURI_INTERNALS__" in window
-  );
+export function isDesktopApp(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 async function callCommand<T>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
-  if (isTauriRuntime()) {
+  if (isDesktopApp()) {
     return invoke<T>(cmd, args);
   }
   return demoInvoke<T>(cmd, args);
@@ -50,4 +48,19 @@ export function getImmunityLog(): Promise<ImmunityDb> {
 
 export function seedDemoLab(): Promise<string> {
   return callCommand<string>("seed_demo_lab");
+}
+
+export async function pickScanFolder(): Promise<string | null> {
+  if (!isDesktopApp()) {
+    return null;
+  }
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Samurai — folder to scan",
+  });
+  if (typeof selected === "string" && selected.trim()) {
+    return selected;
+  }
+  return null;
 }
