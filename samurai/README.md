@@ -4,35 +4,86 @@ Local endpoint detection & response for creators. Ronin Softworx / Neomark Holdi
 
 **Samurai** hunts malware. **Amoeba** restores damaged hosts from *your* shadow copies. Creative sanctuary paths (`neomark`, `retroblazed`, `/Music`, `/Studio-Projects`) are immutable — no delete, quarantine, or rewrite.
 
-Silver / blood-red Y2K metal console. Neon green is not used.
+This is a **desktop app** (Tauri). The real product is an installer, not a website. The Vite UI is a console preview.
 
-## Phase 1 — scaffolding
+## Run it now
+
+### 1. Browser preview (UI only)
+
+From `samurai/`:
 
 ```bash
-# 1. Tauri v2 + Vite + React 19 + TypeScript
-npm create tauri-app@latest samurai -- --template react-ts --manager npm --yes --identifier com.roninsoftworx.samurai --tauri-version 2
-
-cd samurai
-
-# 2. Tailwind CSS v4 via the Vite plugin
 npm install
-npm install -D tailwindcss @tailwindcss/vite
-
-# 3. Icons + readout fonts
-npm install lucide-react @fontsource/orbitron @fontsource/share-tech-mono @fontsource/noto-sans-jp
+npm run dev
 ```
 
-Enable Tailwind in `vite.config.ts` with `import tailwindcss from "@tailwindcss/vite"` and `plugins: [react(), tailwindcss()]`. Import Tailwind in `src/index.css` with `@import "tailwindcss";`.
+Open http://localhost:1420. Scans use a sealed demo lab. YARA / ClamAV / tshark are not live in the browser.
 
-## Run
+### 2. Desktop app (the real product)
+
+Install [Rust](https://rustup.rs/) (stable) and Node 20+, then:
 
 ```bash
-npm run dev          # UI console (browser / Vite)
-npm run tauri dev    # desktop webview (needs WebKitGTK on Linux)
-npm test -s --prefix . 2>/dev/null || cargo test --manifest-path src-tauri/Cargo.toml
+cd samurai
+npm install
+npm run desktop
 ```
 
-The Vite UI talks to the Rust backend inside Tauri. In a plain browser it uses a sealed demo lab so the console still scans, toggles, and restores.
+That launches the Tauri window (`tauri dev`) with the Rust backend.
+
+**Windows:** [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (already on Win10/11) and [MSVC Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+
+**macOS:** Xcode Command Line Tools (`xcode-select --install`).
+
+**Linux:**
+
+```bash
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+```
+
+Optional scanners on PATH: `yara`, `clamscan`, `tshark`.
+
+## Go live (ship installers)
+
+Samurai is sold as a downloadable app for Windows, macOS, and Linux. Hosting it on Render or GitHub Pages does not replace the installer.
+
+### One-time GitHub setup
+
+1. Merge the Samurai PR into `main`.
+2. Repo **Settings → Actions → General → Workflow permissions → Read and write**.
+3. (Later, for stores / SmartScreen / Gatekeeper) add code-signing secrets. Unsigned builds still install; Windows and macOS will warn.
+
+### Cut a release
+
+```bash
+git checkout main
+git pull
+git tag samurai-v0.1.0
+git push origin samurai-v0.1.0
+```
+
+Or **Actions → Samurai release → Run workflow**.
+
+GitHub Actions then builds:
+
+| Platform | Artifact |
+| --- | --- |
+| Windows | NSIS `.exe` / `.msi` |
+| macOS Apple Silicon | `.dmg` |
+| macOS Intel | `.dmg` |
+| Linux | `.deb` + AppImage |
+
+A **draft** GitHub Release is created. Open it, attach notes, and publish. That URL is what you send to testers and later put on roninsoftworx.com / the Apex landing page.
+
+### Build an installer on your machine
+
+```bash
+cd samurai
+npm run desktop:build
+```
+
+Outputs land in `src-tauri/target/release/bundle/`.
 
 ## Product rules
 
