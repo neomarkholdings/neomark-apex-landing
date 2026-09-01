@@ -4,35 +4,111 @@ Local endpoint detection & response for creators. Ronin Softworx / Neomark Holdi
 
 **Samurai** hunts malware. **Amoeba** restores damaged hosts from *your* shadow copies. Creative sanctuary paths (`neomark`, `retroblazed`, `/Music`, `/Studio-Projects`) are immutable — no delete, quarantine, or rewrite.
 
+This is a **desktop app**. The browser preview is a sealed demo lab. Full engines, folder browse, and real restores only run in the Tauri window.
+
 Silver / blood-red Y2K metal console. Neon green is not used.
 
-## Phase 1 — scaffolding
+## Use it on your computer
+
+You need [Node 20+](https://nodejs.org/) and [Rust](https://rustup.rs/) (stable).
 
 ```bash
-# 1. Tauri v2 + Vite + React 19 + TypeScript
-npm create tauri-app@latest samurai -- --template react-ts --manager npm --yes --identifier com.roninsoftworx.samurai --tauri-version 2
-
-cd samurai
-
-# 2. Tailwind CSS v4 via the Vite plugin
+git clone https://github.com/neomarkholdings/neomark-apex-landing.git
+cd neomark-apex-landing/samurai
 npm install
-npm install -D tailwindcss @tailwindcss/vite
-
-# 3. Icons + readout fonts
-npm install lucide-react @fontsource/orbitron @fontsource/share-tech-mono @fontsource/noto-sans-jp
+npm run desktop
 ```
 
-Enable Tailwind in `vite.config.ts` with `import tailwindcss from "@tailwindcss/vite"` and `plugins: [react(), tailwindcss()]`. Import Tailwind in `src/index.css` with `@import "tailwindcss";`.
+That opens the Samurai window. Click **BROWSE**, pick a folder, then **SCAN**. Leave the folder blank to use the built-in self-test lab.
 
-## Run
+### Windows
+
+- [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (already on Windows 10/11)
+- [MSVC Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the “Desktop development with C++” workload
+
+### macOS
 
 ```bash
-npm run dev          # UI console (browser / Vite)
-npm run tauri dev    # desktop webview (needs WebKitGTK on Linux)
-npm test -s --prefix . 2>/dev/null || cargo test --manifest-path src-tauri/Cargo.toml
+xcode-select --install
 ```
 
-The Vite UI talks to the Rust backend inside Tauri. In a plain browser it uses a sealed demo lab so the console still scans, toggles, and restores.
+### Linux
+
+```bash
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+```
+
+### Full scan engines (optional, recommended)
+
+Heuristic scanning is always on. Install these on PATH and they light up in the console:
+
+| Engine | What it adds |
+| --- | --- |
+| **YARA** | Rule match on the self-test antigen and any rules you add later |
+| **ClamAV** (`clamscan`) | Signature malware detection |
+| **tshark** | Protocol sampling only (paused when HIDE PATHS is on) |
+
+```bash
+# macOS
+brew install yara clamav wireshark
+
+# Ubuntu / Debian
+sudo apt install yara clamav tshark
+
+# Windows (winget)
+winget install VirusTotal.YARA
+winget install Cisco.ClamAV
+winget install WiresharkFoundation.Wireshark
+```
+
+After install, restart Samurai. The engine pills should flip from OFF to ON.
+
+Amoeba writes restore points as `{folder}/.amoeba_shadow/{filename}` for clean files under 8 MB. It never writes those copies inside protected folders.
+
+## Browser preview (UI only)
+
+```bash
+npm run dev
+```
+
+Open http://localhost:1420. Scans use the demo lab. BROWSE, YARA, ClamAV, and tshark are not live here.
+
+## Tests
+
+```bash
+npm test
+```
+
+## Ship installers
+
+After this lands on `main`:
+
+1. Repo **Settings → Actions → General → Workflow permissions → Read and write**.
+2. Tag and push:
+
+```bash
+git tag samurai-v0.1.0
+git push origin samurai-v0.1.0
+```
+
+Or **Actions → Samurai release → Run workflow**.
+
+| Platform | Artifact |
+| --- | --- |
+| Windows | NSIS `.exe` |
+| macOS Apple Silicon / Intel | `.dmg` |
+| Linux | `.deb` + AppImage |
+
+Unsigned builds show SmartScreen / Gatekeeper warnings until we add signing.
+
+Local installer:
+
+```bash
+npm run desktop:build
+```
+
+Outputs land in `src-tauri/target/release/bundle/`.
 
 ## Product rules
 

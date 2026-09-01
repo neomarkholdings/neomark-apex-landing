@@ -122,6 +122,7 @@ fn seed_demo_lab(app: AppHandle) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             amoeba_auto_repair: Mutex::new(true),
             streamer_mode: Mutex::new(false),
