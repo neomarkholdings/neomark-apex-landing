@@ -204,6 +204,7 @@ export async function demoInvoke<T>(
       return memory.flags.streamerMode as T;
     case "seed_demo_lab":
       memory.taintedDirty = true;
+      memory.antigens = [];
       return memory.labPath as T;
     case "get_immunity_log":
       return {
