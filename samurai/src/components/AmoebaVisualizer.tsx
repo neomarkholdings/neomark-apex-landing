@@ -32,7 +32,8 @@ export function AmoebaVisualizer({
         onLabel="AUTO"
       />
       <p className="mt-2 font-readout text-[11px] leading-relaxed text-silver/70">
-        Restores infected files from your shadow copies. Never rewrites protected folders.
+        Restores infected files from local shadow copies created on clean sweeps.
+        Never rewrites protected folders.
       </p>
     </DeckPanel>
   );

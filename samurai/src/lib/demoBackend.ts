@@ -61,6 +61,7 @@ function remediatePath(path: string, confirmed: boolean): RepairOutcome {
     return {
       kind: "awaiting_confirmation",
       path: redact(path),
+      restorePath: path,
       message:
         "Amoeba held. Antigen is staged; confirm phagocytosis to restore clean state.",
     };

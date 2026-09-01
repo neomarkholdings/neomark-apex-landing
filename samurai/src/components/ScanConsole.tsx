@@ -5,6 +5,7 @@ import { DeckPanel, SectionHead } from "./Deck";
 interface ScanConsoleProps {
   path: string;
   onPathChange: (value: string) => void;
+  onBrowse: () => void;
   onScan: () => void;
   onRestore: () => void;
   scanning: boolean;
@@ -40,6 +41,7 @@ function engineTone(status: EngineStatus): string {
 export function ScanConsole({
   path,
   onPathChange,
+  onBrowse,
   onScan,
   onRestore,
   scanning,
@@ -85,6 +87,14 @@ export function ScanConsole({
           />
         </label>
         <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={onBrowse}
+            disabled={scanning}
+            className="hardware-btn min-w-[108px] rounded-[10px] px-4 py-2.5 font-display text-[11px] tracking-[0.16em]"
+          >
+            BROWSE
+          </button>
           <button
             type="button"
             onClick={onScan}

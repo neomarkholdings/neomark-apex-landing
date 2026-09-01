@@ -4,7 +4,7 @@
 //! `{parent}/.amoeba_shadow/{filename}`. On Windows, a Volume Shadow Copy
 //! hook is reserved for the same restore path once a shadow candidate exists.
 
-use crate::sanctuary::assert_not_sanctuary;
+use crate::sanctuary::{assert_not_sanctuary, is_sanctuary};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -23,6 +23,8 @@ pub enum RepairOutcome {
     AwaitingConfirmation {
         path: String,
         message: String,
+        #[serde(rename = "restorePath")]
+        restore_path: String,
     },
     SanctuaryAbort {
         path: String,
@@ -66,6 +68,9 @@ pub struct RemediateRequest<'a> {
     pub engine_tag: &'a str,
     pub redact_paths: bool,
 }
+
+/// Maximum size of a localized restore point created during a clean sweep.
+pub const MAX_RESTORE_POINT_BYTES: u64 = 8 * 1024 * 1024;
 
 pub fn backup_reference(target: &Path) -> PathBuf {
     let file_name = target.file_name().unwrap_or_default();
@@ -154,6 +159,30 @@ pub fn present_antigen(
     fs::write(immunity_db, json).map_err(|e| format!("immunity_db write: {e}"))
 }
 
+/// Snapshot a clean host file beside the original. Never writes inside sanctuary
+/// sectors, never overwrites an existing shadow, and never copies a huge file.
+pub fn create_restore_point(target: &Path) -> Result<bool, String> {
+    if is_sanctuary(target) {
+        return Ok(false);
+    }
+    if !target.is_file() {
+        return Ok(false);
+    }
+    let meta = fs::metadata(target).map_err(|e| format!("restore-point stat: {e}"))?;
+    if meta.len() > MAX_RESTORE_POINT_BYTES {
+        return Ok(false);
+    }
+    let shadow = backup_reference(target);
+    if shadow.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = shadow.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("restore-point mkdir: {e}"))?;
+    }
+    fs::copy(target, &shadow).map_err(|e| format!("restore-point copy: {e}"))?;
+    Ok(true)
+}
+
 fn restore_clean_state(target: &Path, source: &Path) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("restore mkdir: {e}"))?;
@@ -175,6 +204,7 @@ pub fn remediate(req: RemediateRequest<'_>) -> RepairOutcome {
     if !req.auto_repair && !req.confirmed {
         return RepairOutcome::AwaitingConfirmation {
             path: shown,
+            restore_path: req.target.to_string_lossy().into_owned(),
             message: "Amoeba held. Antigen is staged; confirm phagocytosis to restore clean state."
                 .to_string(),
         };
@@ -392,5 +422,33 @@ mod tests {
                 .unwrap()
                 .contains("SAMURAI-AMOEBA-ANTIGEN-SELFTEST")
         );
+    }
+
+    #[test]
+    fn restore_point_snapshots_clean_host_once() {
+        let root = unique_dir("shadow-clean");
+        let host = root.join("notes.txt");
+        fs::write(&host, b"keep-me").unwrap();
+        assert!(create_restore_point(&host).unwrap());
+        assert_eq!(
+            fs::read(root.join(".amoeba_shadow").join("notes.txt")).unwrap(),
+            b"keep-me"
+        );
+        fs::write(&host, b"changed").unwrap();
+        assert!(!create_restore_point(&host).unwrap());
+        assert_eq!(
+            fs::read(root.join(".amoeba_shadow").join("notes.txt")).unwrap(),
+            b"keep-me"
+        );
+    }
+
+    #[test]
+    fn restore_point_skips_sanctuary_hosts() {
+        let root = unique_dir("shadow-music");
+        let host = root.join("Music").join("vocal.wav");
+        fs::create_dir_all(host.parent().unwrap()).unwrap();
+        fs::write(&host, b"RIFF").unwrap();
+        assert!(!create_restore_point(&host).unwrap());
+        assert!(!root.join("Music").join(".amoeba_shadow").exists());
     }
 }

@@ -93,10 +93,20 @@ async function main() {
     check(idle.includes("/Music"), "protected folders list /Music");
     check(idle.includes("/Studio-Projects"), "protected folders list /Studio-Projects");
     check(
+      await page.getByRole("button", { name: /^BROWSE$/ }).isVisible(),
+      "BROWSE is available to pick a real folder",
+    );
+    check(
       await page.getByRole("button", { name: /^RESTORE$/ }).isDisabled(),
       "RESTORE stays disabled until Amoeba is waiting",
     );
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_idle.png`, fullPage: true });
+
+    await page.getByRole("button", { name: /^BROWSE$/ }).click();
+    check(
+      (await page.locator("body").innerText()).includes("Folder picker is in the desktop app"),
+      "browser preview explains that BROWSE needs the desktop app",
+    );
 
     await page.locator('button[role="switch"]').filter({ hasText: "ASK" }).click();
     await runScan(page);

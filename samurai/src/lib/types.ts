@@ -25,6 +25,7 @@ export type RepairOutcome =
       kind: "awaiting_confirmation";
       path: string;
       message: string;
+      restorePath: string;
     }
   | {
       kind: "sanctuary_abort";

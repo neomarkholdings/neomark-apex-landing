@@ -64,7 +64,11 @@ async function run(): Promise<void> {
   await demoInvoke("toggle_amoeba_auto_repair");
   const askScan = await demoInvoke<ScanReport>("run_samurai_scan", { targetPath: null });
   check(
-    askScan.autoActions.some((item) => item.kind === "awaiting_confirmation"),
+    askScan.autoActions.some(
+      (item) =>
+        item.kind === "awaiting_confirmation" &&
+        item.restorePath.endsWith("tainted.txt"),
+    ),
     "ASK scan stages phagocytosis instead of rewriting",
   );
   const beforeConfirm = await demoInvoke<ImmunityDb>("get_immunity_log");

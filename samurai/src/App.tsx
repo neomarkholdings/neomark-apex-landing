@@ -9,6 +9,8 @@ import {
   amoebaRemediate,
   getAppState,
   getImmunityLog,
+  isDesktopApp,
+  pickScanFolder,
   runSamuraiScan,
   seedDemoLab,
   toggleAmoebaAutoRepair,
@@ -128,7 +130,7 @@ export default function App() {
     try {
       const next = await runSamuraiScan(path);
       await ingestReport(next);
-      if (next.labPath) {
+      if (next.labPath && !path.trim()) {
         setLabPath(next.labPath);
       }
     } catch (scanError) {
@@ -145,7 +147,10 @@ export default function App() {
     setRepairing(true);
     setError(null);
     try {
-      const outcome = await amoebaRemediate(resolveRepairPath(pending, labPath), true);
+      const outcome = await amoebaRemediate(
+        pending.restorePath || resolveRepairPath(pending, labPath),
+        true,
+      );
       setPending(outcome);
       if (outcome.kind === "repaired") {
         const next = await runSamuraiScan(path);
@@ -155,6 +160,20 @@ export default function App() {
       setError(repairError instanceof Error ? repairError.message : String(repairError));
     } finally {
       window.setTimeout(() => setRepairing(false), 900);
+    }
+  }
+
+  async function handleBrowse(): Promise<void> {
+    setError(null);
+    const picked = await pickScanFolder();
+    if (picked) {
+      setPath(picked);
+      return;
+    }
+    if (!isDesktopApp()) {
+      setError(
+        "Folder picker is in the desktop app. Type a folder path here, or run npm run desktop.",
+      );
     }
   }
 
@@ -225,6 +244,9 @@ export default function App() {
               <ScanConsole
                 path={path}
                 onPathChange={setPath}
+                onBrowse={() => {
+                  void handleBrowse();
+                }}
                 onScan={() => {
                   void handleScan();
                 }}

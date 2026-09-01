@@ -5,7 +5,8 @@
 //! Raw terminal dumps never reach the UI.
 
 use crate::amoeba_engine::{
-    ensure_demo_lab, known_antigen, load_immunity_db, remediate, RepairOutcome, RemediateRequest,
+    create_restore_point, ensure_demo_lab, known_antigen, load_immunity_db, remediate,
+    RepairOutcome, RemediateRequest,
 };
 use crate::sanctuary::{is_sanctuary, ERR_SANCTUARY_ZONE};
 use serde::{Deserialize, Serialize};
@@ -441,6 +442,26 @@ fn which_exists(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn file_has_finding(path: &Path, findings: &[Finding]) -> bool {
+    findings.iter().any(|finding| {
+        finding.path.as_ref().is_some_and(|shown| {
+            shown == &path.to_string_lossy()
+                || path
+                    .file_name()
+                    .is_some_and(|name| shown.ends_with(&*name.to_string_lossy()))
+        })
+    })
+}
+
+fn snapshot_clean_hosts(files: &[PathBuf], findings: &[Finding]) {
+    for path in files {
+        if file_has_finding(path, findings) {
+            continue;
+        }
+        let _ = create_restore_point(path);
+    }
+}
+
 fn unique_finding_paths(findings: &[Finding]) -> Vec<String> {
     let mut paths = Vec::new();
     for finding in findings {
@@ -492,6 +513,8 @@ pub fn run_scan(
     let (tshark_status, tshark_hits) = run_tshark(streamer_mode);
     statuses.push(tshark_status);
     findings.extend(tshark_hits);
+
+    snapshot_clean_hosts(&files, &findings);
 
     let mut auto_actions = Vec::new();
     if is_sanctuary(&target) {
@@ -690,6 +713,10 @@ mod tests {
             second.auto_actions
         );
         assert!(second.threat_score <= 30);
+        assert_eq!(
+            fs::read(root.join("scan_lab").join(".amoeba_shadow").join("ok.txt")).unwrap(),
+            b"nominal chassis telemetry\n"
+        );
     }
 
     #[test]
@@ -708,6 +735,41 @@ mod tests {
         let host = fs::read_to_string(root.join("scan_lab").join("tainted.txt")).unwrap();
         assert!(host.contains(SELFTEST_ANTIGEN));
         assert!(!immunity.exists());
+    }
+
+    #[test]
+    fn clean_user_folder_gets_restore_points_infected_host_does_not() {
+        let root = temp_lab("user-folder");
+        let folder = root.join("Downloads");
+        fs::create_dir_all(folder.join(".amoeba_shadow")).unwrap();
+        fs::write(folder.join("invoice.pdf"), b"%PDF-clean").unwrap();
+        fs::write(
+            folder.join("tainted.txt"),
+            format!("x {SELFTEST_ANTIGEN}\n").as_bytes(),
+        )
+        .unwrap();
+        fs::write(
+            folder.join(".amoeba_shadow").join("tainted.txt"),
+            b"prior-clean",
+        )
+        .unwrap();
+        let immunity = root.join("immunity_db.json");
+        run_scan(
+            Some(folder.to_string_lossy().into_owned()),
+            false,
+            false,
+            &root,
+            &immunity,
+        )
+        .expect("user folder scan");
+        assert_eq!(
+            fs::read(folder.join(".amoeba_shadow").join("invoice.pdf")).unwrap(),
+            b"%PDF-clean"
+        );
+        assert_eq!(
+            fs::read(folder.join(".amoeba_shadow").join("tainted.txt")).unwrap(),
+            b"prior-clean"
+        );
     }
 
     #[test]
@@ -735,6 +797,7 @@ mod tests {
             report.auto_actions
         );
         assert_eq!(fs::read(&vocal).unwrap(), b"do-not-touch");
+        assert!(!music_dir.join(".amoeba_shadow").exists());
         assert!(!immunity.exists());
         assert_eq!(report.threat_score, 0);
         assert!(report.synthesis.contains("Sanctuary sector locked"));
