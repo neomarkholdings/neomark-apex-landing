@@ -93,38 +93,37 @@ function remediatePath(path: string, confirmed: boolean): RepairOutcome {
 
 function buildScan(targetPath?: string | null): ScanReport {
   const lab = memory.labPath;
-  const target = targetPath?.trim() ? targetPath.trim() : lab;
+  const customTarget = targetPath?.trim() ? targetPath.trim() : null;
   const tainted = `${lab}/tainted.txt`;
   const findings = [];
+  const autoActions: RepairOutcome[] = [];
 
-  if (memory.taintedDirty) {
+  if (customTarget && isSanctuaryPath(customTarget)) {
+    autoActions.push({
+      kind: "sanctuary_abort",
+      path: redact(customTarget),
+      message: SANCTUARY_ABORT,
+    });
+  } else if (!customTarget) {
+    memory.taintedDirty = true;
     findings.push({
       engine: "heuristic",
       detail: "Self-test antigen string located in host file.",
       path: redact(tainted),
       severity: "critical" as const,
     });
-  }
-
-  const autoActions: RepairOutcome[] = [];
-  if (findings.length > 0) {
     autoActions.push(remediatePath(tainted, false));
-  }
-
-  if (isSanctuaryPath(target) && target !== lab) {
-    autoActions.push({
-      kind: "sanctuary_abort",
-      path: redact(target),
-      message: SANCTUARY_ABORT,
-    });
   }
 
   const repaired = autoActions.filter((item) => item.kind === "repaired").length;
   const awaiting = autoActions.filter(
     (item) => item.kind === "awaiting_confirmation",
   ).length;
+  const aborted = autoActions.filter((item) => item.kind === "sanctuary_abort").length;
   let threatScore = findings.length === 0 ? 4 : 78;
-  if (repaired > 0 && awaiting === 0) {
+  if (aborted > 0) {
+    threatScore = 0;
+  } else if (repaired > 0 && awaiting === 0) {
     threatScore = 12;
   } else if (awaiting > 0) {
     threatScore = 64;
@@ -132,6 +131,9 @@ function buildScan(targetPath?: string | null): ScanReport {
 
   const band = bandFromScore(threatScore);
   const synthesis = (() => {
+    if (aborted > 0) {
+      return "Sanctuary sector locked; Samurai will not rewrite, quarantine, or restore inside the creations vault.";
+    }
     if (threatScore <= 5 && findings.length === 0) {
       return "Chassis is sterile; Samurai reports no antigenic residue on this sweep.";
     }
