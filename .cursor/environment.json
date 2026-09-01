@@ -1,0 +1,20 @@
+{
+  "name": "Neomark Apex + Samurai EDR",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "samurai-vite",
+      "command": "cd samurai && npm run dev",
+      "description": "Samurai EDR console — Vite dev server on http://localhost:1420. In a plain browser it uses the sealed demo-lab backend so scan/restore/toggle flows work without the Tauri runtime."
+    },
+    {
+      "name": "landing-static",
+      "command": "python3 -m http.server 8080",
+      "description": "Neomark Apex SEO landing page (index.html) served on http://localhost:8080."
+    }
+  ],
+  "ports": [
+    { "name": "samurai-vite", "port": 1420 },
+    { "name": "landing", "port": 8080 }
+  ]
+}
