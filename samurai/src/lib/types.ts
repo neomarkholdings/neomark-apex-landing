@@ -48,11 +48,20 @@ export interface ScanReport {
   streamerMode: boolean;
   scannedFiles: number;
   labPath?: string | null;
+  intercepts?: Intercept[];
+}
+
+export interface Intercept {
+  originalPath: string;
+  holdPath?: string | null;
+  reason: string;
+  kind: "held" | "sanctuary_alert" | string;
 }
 
 export interface AppFlags {
   amoebaAutoRepair: boolean;
   streamerMode: boolean;
+  liveWatch: boolean;
 }
 
 export interface Antigen {

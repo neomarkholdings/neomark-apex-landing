@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AmoebaVisualizer } from "./components/AmoebaVisualizer";
 import { CreationsVault } from "./components/CreationsVault";
 import { ScanConsole } from "./components/ScanConsole";
+import { InstallGatePanel } from "./components/InstallGatePanel";
 import { StreamerPanel } from "./components/StreamerPanel";
 import { ThreatGauge } from "./components/ThreatGauge";
 import { Led, Screw, Vent } from "./components/HardwareBits";
@@ -9,15 +10,17 @@ import {
   amoebaRemediate,
   getAppState,
   getImmunityLog,
+  getIntercepts,
   isDesktopApp,
   pickScanFolder,
   runSamuraiScan,
   seedDemoLab,
   toggleAmoebaAutoRepair,
+  toggleLiveWatch,
   toggleStreamerMode,
 } from "./lib/api";
 import { bandFromScore } from "./lib/types";
-import type { AppFlags, RepairOutcome, ScanReport } from "./lib/types";
+import type { AppFlags, Intercept, RepairOutcome, ScanReport } from "./lib/types";
 
 const IDLE_SYNTHESIS =
   "Protection is on. Run a scan to inspect a folder. Samurai will not rewrite your creations.";
@@ -28,6 +31,11 @@ const IDLE_ENGINES = [
     name: "foothold",
     available: true,
     summary: "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.",
+  },
+  {
+    name: "gate",
+    available: true,
+    summary: "Install gate armed: crack/keygen/RAT drops are held on write.",
   },
   { name: "yara", available: false, summary: "YARA is not installed" },
   { name: "clamav", available: false, summary: "ClamAV is not installed" },
@@ -67,6 +75,7 @@ export default function App() {
   const [flags, setFlags] = useState<AppFlags>({
     amoebaAutoRepair: true,
     streamerMode: false,
+    liveWatch: true,
   });
   const [path, setPath] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -77,6 +86,7 @@ export default function App() {
   const [labPath, setLabPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastScanAt, setLastScanAt] = useState<string | null>(null);
+  const [intercepts, setIntercepts] = useState<Intercept[]>([]);
 
   const score = report?.threatScore ?? 0;
   const band = report?.band ?? bandFromScore(score);
@@ -91,12 +101,17 @@ export default function App() {
     let cancelled = false;
     async function boot(): Promise<void> {
       try {
-        const [state, lab] = await Promise.all([getAppState(), seedDemoLab()]);
+        const [state, lab, held] = await Promise.all([
+          getAppState(),
+          seedDemoLab(),
+          getIntercepts(),
+        ]);
         if (cancelled) {
           return;
         }
         setFlags(state);
         setLabPath(lab);
+        setIntercepts(held);
         await refreshImmunity();
       } catch (bootError) {
         if (!cancelled) {
@@ -120,6 +135,9 @@ export default function App() {
       const repaired = next.autoActions.find((item) => item.kind === "repaired");
       const abort = next.autoActions.find((item) => item.kind === "sanctuary_abort");
       setPending(awaiting ?? abort ?? repaired ?? next.autoActions[0] ?? null);
+      if (next.intercepts && next.intercepts.length > 0) {
+        setIntercepts((current) => [...next.intercepts!, ...current].slice(0, 40));
+      }
       if (repaired) {
         setRepairing(true);
         window.setTimeout(() => setRepairing(false), 1600);
@@ -192,6 +210,11 @@ export default function App() {
     setFlags((current) => ({ ...current, streamerMode: value }));
   }
 
+  async function handleLiveWatchToggle(): Promise<void> {
+    const value = await toggleLiveWatch();
+    setFlags((current) => ({ ...current, liveWatch: value }));
+  }
+
   return (
     <div className="stage">
       <div className="chassis">
@@ -246,6 +269,13 @@ export default function App() {
                   void handleAmoebaToggle();
                 }}
               />
+              <InstallGatePanel
+                liveWatch={flags.liveWatch}
+                intercepts={intercepts}
+                onToggle={() => {
+                  void handleLiveWatchToggle();
+                }}
+              />
               <StreamerPanel
                 streamerMode={flags.streamerMode}
                 onToggle={() => {
@@ -274,6 +304,7 @@ export default function App() {
                 engines={report?.engineStatuses ?? IDLE_ENGINES}
                 scannedFiles={report?.scannedFiles ?? 0}
                 hasScanned={Boolean(lastScanAt)}
+                intercepts={intercepts}
               />
               <CreationsVault />
             </div>

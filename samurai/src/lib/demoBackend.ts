@@ -4,6 +4,7 @@ import type {
   Antigen,
   AppFlags,
   ImmunityDb,
+  Intercept,
   RepairOutcome,
   ScanReport,
 } from "./types";
@@ -15,16 +16,19 @@ interface DemoMemory {
   antigens: Antigen[];
   labPath: string;
   taintedDirty: boolean;
+  intercepts: Intercept[];
 }
 
 const memory: DemoMemory = {
   flags: {
     amoebaAutoRepair: true,
     streamerMode: false,
+    liveWatch: true,
   },
   antigens: [],
   labPath: "/tmp/samurai-lab",
   taintedDirty: true,
+  intercepts: [],
 };
 
 function redact(path: string): string {
@@ -139,6 +143,37 @@ function isRansomNoteName(name: string): boolean {
   ].some((clue) => n.includes(clue));
 }
 
+function isWarezName(name: string): boolean {
+  const n = name.toLowerCase();
+  if (
+    /\.(wav|mp3|flac|aiff|aif|m4a|ogg|als|flp)$/.test(n) &&
+    !isDoubleExecName(n)
+  ) {
+    return false;
+  }
+  return ["crack", "keygen", "activator", "nulled", "warez", "patcher"].some(
+    (clue) => n.includes(clue),
+  );
+}
+
+function isMasqueradeName(path: string): boolean {
+  const name = (path.split(/[/\\]/).pop() ?? "").toLowerCase();
+  const joined = path.replace(/\\/g, "/").toLowerCase();
+  const masquerade = [
+    "svchost.exe",
+    "lsass.exe",
+    "services.exe",
+    "winlogon.exe",
+    "csrss.exe",
+    "smss.exe",
+  ];
+  return (
+    masquerade.includes(name) &&
+    !joined.includes("/windows/system32") &&
+    !joined.includes("/windows/syswow64")
+  );
+}
+
 function footholdFromTarget(customTarget: string | null): ScanReport["findings"] {
   if (!customTarget || isSanctuaryPath(customTarget)) {
     return [];
@@ -150,6 +185,28 @@ function footholdFromTarget(customTarget: string | null): ScanReport["findings"]
         engine: "foothold",
         detail:
           "Double-extension drop: a creation or document name hiding an executable.",
+        path: redact(customTarget),
+        severity: "critical",
+      },
+    ];
+  }
+  if (isWarezName(name)) {
+    return [
+      {
+        engine: "foothold",
+        detail:
+          "Crack/keygen/activator drop — common trojan, RAT, or ransomware loader.",
+        path: redact(customTarget),
+        severity: "critical",
+      },
+    ];
+  }
+  if (isMasqueradeName(customTarget)) {
+    return [
+      {
+        engine: "foothold",
+        detail:
+          "System binary name dropped outside System32 — classic RAT / loader masquerade.",
         path: redact(customTarget),
         severity: "critical",
       },
@@ -241,9 +298,40 @@ function buildScan(targetPath?: string | null): ScanReport {
     return "Critical incursion on the blood-red band; confirm phagocytosis to restore clean state.";
   })();
 
+  const intercepts: Intercept[] = [];
+  if (memory.flags.liveWatch && aborted === 0) {
+    for (const finding of findings) {
+      const holdable =
+        finding.engine === "foothold" &&
+        (finding.detail.includes("Crack/keygen") ||
+          finding.detail.includes("Double-extension") ||
+          finding.detail.includes("System binary") ||
+          finding.detail.includes("Ransom-note") ||
+          finding.detail.includes("disguised"));
+      if (!holdable || !finding.path) {
+        continue;
+      }
+      const name = finding.path.split(/[/\\]/).pop() ?? "drop.bin";
+      intercepts.push({
+        originalPath: finding.path,
+        holdPath: `[INSTALL-GATE]/${name}`,
+        reason: finding.detail,
+        kind: "held",
+      });
+    }
+  }
+  if (intercepts.length > 0) {
+    memory.intercepts = [...intercepts, ...memory.intercepts].slice(0, 40);
+  }
+
   const sentence = memory.flags.streamerMode
-    ? `${synthesis.replace(/\.$/, "")}, with streamer shield masking path readout.`
-    : synthesis;
+    ? `${(intercepts.length > 0
+        ? "Install gate held a high-risk drop before it could run. Creations were not rewritten."
+        : synthesis
+      ).replace(/\.$/, "")}, with streamer shield masking path readout.`
+    : intercepts.length > 0
+      ? "Install gate held a high-risk drop before it could run. Creations were not rewritten."
+      : synthesis;
 
   return {
     threatScore,
@@ -263,6 +351,16 @@ function buildScan(targetPath?: string | null): ScanReport {
           findings.filter((item) => item.engine === "foothold").length > 0
             ? `${findings.filter((item) => item.engine === "foothold").length} creator-threat or persistence hit(s).`
             : "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.",
+      },
+      {
+        name: "gate",
+        available: memory.flags.liveWatch,
+        summary:
+          intercepts.length > 0
+            ? `${intercepts.length} drop(s) moved to the install-gate vault.`
+            : memory.flags.liveWatch
+              ? "Install gate armed: crack/keygen/RAT drops are held on write."
+              : "Install gate standby.",
       },
       {
         name: "yara",
@@ -286,6 +384,7 @@ function buildScan(targetPath?: string | null): ScanReport {
     streamerMode: memory.flags.streamerMode,
     scannedFiles: 6,
     labPath: lab,
+    intercepts,
   };
 }
 
@@ -302,9 +401,15 @@ export async function demoInvoke<T>(
     case "toggle_streamer_mode":
       memory.flags.streamerMode = !memory.flags.streamerMode;
       return memory.flags.streamerMode as T;
+    case "toggle_live_watch":
+      memory.flags.liveWatch = !memory.flags.liveWatch;
+      return memory.flags.liveWatch as T;
+    case "get_intercepts":
+      return memory.intercepts as T;
     case "seed_demo_lab":
       memory.taintedDirty = true;
       memory.antigens = [];
+      memory.intercepts = [];
       return memory.labPath as T;
     case "get_immunity_log":
       return {
