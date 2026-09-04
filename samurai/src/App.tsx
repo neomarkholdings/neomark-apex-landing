@@ -131,6 +131,7 @@ export default function App() {
   const [aligning, setAligning] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [station, setStation] = useState<BladeStation>("protection");
+  const [unsheathed, setUnsheathed] = useState(true);
   const autoDrewGate = useRef(false);
   const autoDrewAmoeba = useRef(false);
 
@@ -288,11 +289,13 @@ export default function App() {
     if (hasHold && !autoDrewGate.current) {
       autoDrewGate.current = true;
       setStation("gate");
+      setUnsheathed(true);
       return;
     }
     if (pending?.kind === "awaiting_confirmation" && !autoDrewAmoeba.current) {
       autoDrewAmoeba.current = true;
       setStation("amoeba");
+      setUnsheathed(true);
     }
   }, [intercepts, pending]);
 
@@ -433,6 +436,17 @@ export default function App() {
     }
   }
 
+  const duty: Partial<Record<BladeStation, boolean>> = {
+    gate: intercepts.some((item) => item.kind === "held"),
+    amoeba: pending?.kind === "awaiting_confirmation",
+    privacy: flags.streamerMode,
+  };
+
+  function selectStation(next: BladeStation): void {
+    setStation(next);
+    setUnsheathed(true);
+  }
+
   function drawnStationPanel(drawn: BladeStation): ReactNode {
     switch (drawn) {
       case "protection":
@@ -552,17 +566,27 @@ export default function App() {
           </header>
           <div className="blood-rule" aria-hidden="true" />
 
-          <div className="av-grid dojo-grid">
-            <KatanaRail station={station} onSelect={setStation} />
-            <div
-              className="drawn-blade"
-              id="drawn-blade"
-              role="tabpanel"
-              aria-labelledby={`station-${station}`}
-              key={station}
-            >
-              {drawnStationPanel(station)}
-            </div>
+          <div className={`av-grid dojo-grid${unsheathed ? "" : " is-sheathed"}`}>
+            <KatanaRail
+              station={station}
+              onSelect={selectStation}
+              unsheathed={unsheathed}
+              onToggleSheathe={() => {
+                setUnsheathed((open) => !open);
+              }}
+              duty={duty}
+            />
+            {unsheathed ? (
+              <div
+                className="drawn-blade"
+                id="drawn-blade"
+                role="tabpanel"
+                aria-labelledby={`station-${station}`}
+                key={station}
+              >
+                {drawnStationPanel(station)}
+              </div>
+            ) : null}
 
             <div className="stack scan-column">
               <ScanConsole

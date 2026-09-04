@@ -72,7 +72,8 @@ async function drawStation(page, name) {
   await page.waitForFunction(
     (label) => {
       const selected = document.querySelector('[role="tab"][aria-selected="true"]');
-      return selected?.getAttribute("aria-label") === label;
+      const current = selected?.getAttribute("aria-label") ?? "";
+      return current === label || current.startsWith(`${label} ·`);
     },
     name,
   );
@@ -174,6 +175,16 @@ async function main() {
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_idle.png`, fullPage: true });
 
     await drawStation(page, "PROTECTION");
+    await page.getByRole("button", { name: "Sheathe" }).click();
+    check(
+      !(await page.getByRole("switch", { name: "Protection" }).isVisible()),
+      "Sheathe hides the drawn blade so the scan table keeps the chassis",
+    );
+    await page.getByRole("button", { name: "Draw" }).click();
+    check(
+      await page.getByRole("switch", { name: "Protection" }).isVisible(),
+      "Draw puts the protection blade back in the chassis",
+    );
     await page.getByRole("switch", { name: "Protection" }).click();
     await page.locator(".protect-pill").getByText("DISARMED").waitFor({ timeout: 15000 });
     const disarmedIdle = await page.locator(".protect-pill").innerText();
@@ -302,6 +313,10 @@ async function main() {
     check(
       (await page.getByRole("tab", { name: "INSTALL GATE" }).getAttribute("aria-selected")) === "true",
       "a held crack drop unsheathes INSTALL GATE",
+    );
+    check(
+      (await page.getByRole("tab", { name: "INSTALL GATE" }).getAttribute("data-duty")) === "true",
+      "a held crack drop marks INSTALL GATE with duty",
     );
     const warez = await page.locator("body").innerText();
     check(

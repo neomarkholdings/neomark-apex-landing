@@ -136,7 +136,7 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev
 npm run dev
 ```
 
-Open http://localhost:1420. Scans use the demo lab. BROWSE, YARA, ClamAV, and tshark are not live here. Tools live on a katana station rail — draw **PROTECTION**, **AMOEBA**, **INSTALL GATE**, **RESIDENT**, **WINDOWS LINE**, or **PRIVACY**. The scan table stays on the right.
+Open http://localhost:1420. Scans use the demo lab. BROWSE, YARA, ClamAV, and tshark are not live here. Tools live on a katana station rail — draw **PROTECTION**, **AMOEBA**, **INSTALL GATE**, **RESIDENT**, **WINDOWS LINE**, or **PRIVACY**. **Sheathe** collapses the drawn blade so the scan table keeps the chassis. A blood pip marks a station that has duty (a hold, an awaiting restore, or the streamer shield). The scan table stays on the right.
 
 ## Tests
 
