@@ -1,5 +1,6 @@
 import { isSanctuaryPath, SANCTUARY_ABORT } from "./sanctuary";
 import { dueToRearm, rearmDeadline } from "./protection";
+import { PREVIEW_RESIDENT_SUMMARY } from "./resident";
 import { bandFromScore } from "./types";
 import type {
   Antigen,
@@ -19,6 +20,7 @@ interface DemoMemory {
   labPath: string;
   taintedDirty: boolean;
   intercepts: Intercept[];
+  autostart: boolean;
 }
 
 const memory: DemoMemory = {
@@ -32,6 +34,7 @@ const memory: DemoMemory = {
   labPath: "/tmp/samurai-lab",
   taintedDirty: true,
   intercepts: [],
+  autostart: false,
 };
 
 function maybeRearm(): void {
@@ -468,6 +471,16 @@ function previewWindowsLine(): WindowsLineStatus {
   };
 }
 
+function previewResident() {
+  return {
+    host: "preview",
+    tray: false,
+    autostart: memory.autostart,
+    silent: false,
+    summary: PREVIEW_RESIDENT_SUMMARY,
+  };
+}
+
 export async function demoInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
@@ -522,11 +535,21 @@ export async function demoInvoke<T>(
       memory.intercepts = [];
       memory.flags.liveWatch = true;
       memory.flags.disarmedUntil = null;
+      memory.autostart = false;
       return memory.labPath as T;
     case "get_windows_line":
       return previewWindowsLine() as T;
     case "align_windows_line":
       return previewWindowsLine().summary as T;
+    case "get_resident":
+      return previewResident() as T;
+    case "toggle_autostart":
+      memory.autostart = !memory.autostart;
+      return memory.autostart as T;
+    case "hide_to_tray":
+      throw new Error(
+        "Tray is in the desktop app. Close the window there to sit in the taskbar.",
+      );
     case "get_immunity_log":
       return {
         version: 1,

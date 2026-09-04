@@ -67,6 +67,14 @@ export interface WindowsLineStatus {
   summary: string;
 }
 
+export interface ResidentStatus {
+  host: string;
+  tray: boolean;
+  autostart: boolean;
+  silent?: boolean;
+  summary: string;
+}
+
 export interface AppFlags {
   amoebaAutoRepair: boolean;
   streamerMode: boolean;

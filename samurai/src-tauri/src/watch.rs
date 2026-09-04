@@ -98,6 +98,10 @@ fn run(app: AppHandle) {
                 if watch.note(path.clone(), stamp) {
                     if let Some(intercept) = inspect_and_hold(&path, &hold_root, streamer) {
                         record_intercept(&app, intercept);
+                        crate::resident::sync_tray(&app);
+                        if crate::resident::should_raise_console_on_hold() {
+                            crate::resident::reveal(&app);
+                        }
                     }
                 }
             }

@@ -9,6 +9,7 @@ mod drop_watch;
 mod foothold;
 mod install_gate;
 mod protection;
+mod resident;
 mod samurai_engine;
 mod sanctuary;
 mod watch;
@@ -18,6 +19,7 @@ use amoeba_engine::{
     load_immunity_db, remediate, seed_demo_lab as provision_demo_lab, ImmunityDb, RemediateRequest,
 };
 use install_gate::Intercept;
+use resident::ResidentStatus;
 use samurai_engine::ScanReport;
 use sanctuary::is_sanctuary_path;
 use serde::Serialize;
@@ -164,10 +166,11 @@ fn toggle_streamer_mode(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
-fn toggle_live_watch(state: State<AppState>) -> bool {
+fn toggle_live_watch(app: AppHandle, state: State<AppState>) -> bool {
     state.apply_rearm();
     let next = toggle_flag(&state.live_watch);
     state.set_rearm_deadline(next);
+    resident::sync_tray(&app);
     next
 }
 
@@ -182,6 +185,7 @@ fn get_intercepts(state: State<AppState>) -> Vec<Intercept> {
 
 #[tauri::command]
 fn release_intercept(
+    app: AppHandle,
     state: State<AppState>,
     hold_path: String,
     original_path: String,
@@ -195,6 +199,8 @@ fn release_intercept(
       item.hold_path.as_deref() != Some(hold_path.as_str())
         && item.original_path != original_path
     });
+    drop(log);
+    resident::sync_tray(&app);
     Ok(dest.to_string_lossy().into_owned())
 }
 
@@ -218,6 +224,7 @@ fn run_samurai_scan(
         if live { Some(hold_dir.as_path()) } else { None },
     )?;
     remember_intercepts(&state, &report.intercepts);
+    resident::sync_tray(&app);
     Ok(report)
 }
 
@@ -254,7 +261,25 @@ fn get_immunity_log(app: AppHandle, state: State<AppState>) -> Result<ImmunityDb
 fn seed_demo_lab(app: AppHandle, state: State<AppState>) -> Result<String, String> {
     state.rearm_now();
     let lab = provision_demo_lab(&data_dir(&app)?)?;
+    resident::sync_tray(&app);
     Ok(lab.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn get_resident(app: AppHandle) -> ResidentStatus {
+    resident::status(&app, resident::is_silent_launch())
+}
+
+#[tauri::command]
+fn toggle_autostart(app: AppHandle) -> Result<bool, String> {
+    let next = !resident::autostart_enabled(&app);
+    resident::set_autostart(&app, next)
+}
+
+#[tauri::command]
+fn hide_to_tray(app: AppHandle) -> Result<(), String> {
+    resident::sit(&app);
+    Ok(())
 }
 
 fn install_dir() -> PathBuf {
@@ -280,6 +305,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![resident::SILENT_FLAG.into()]),
+        ))
         .manage(AppState {
             amoeba_auto_repair: Mutex::new(true),
             streamer_mode: Mutex::new(false),
@@ -288,8 +317,19 @@ pub fn run() {
             intercepts: Mutex::new(Vec::new()),
         })
         .setup(|app| {
+            resident::install(app.handle())?;
+            resident::bootstrap_autostart(app.handle());
+            if !resident::should_show_console(app.handle(), resident::is_silent_launch()) {
+                resident::sit(app.handle());
+            }
             watch::spawn(app.handle().clone());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                resident::sit_from_window(window);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_app_state,
@@ -303,7 +343,10 @@ pub fn run() {
             get_immunity_log,
             seed_demo_lab,
             get_windows_line,
-            align_windows_line
+            align_windows_line,
+            get_resident,
+            toggle_autostart,
+            hide_to_tray
         ])
         .run(tauri::generate_context!())
         .expect("error while running Samurai");
