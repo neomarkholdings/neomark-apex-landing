@@ -5,12 +5,15 @@ import { ScanConsole } from "./components/ScanConsole";
 import { InstallGatePanel } from "./components/InstallGatePanel";
 import { StreamerPanel } from "./components/StreamerPanel";
 import { ThreatGauge } from "./components/ThreatGauge";
+import { WindowsLinePanel } from "./components/WindowsLinePanel";
 import { Led, Screw, Vent } from "./components/HardwareBits";
 import {
+  alignWindowsLine,
   amoebaRemediate,
   getAppState,
   getImmunityLog,
   getIntercepts,
+  getWindowsLine,
   isDesktopApp,
   pickScanFolder,
   releaseIntercept,
@@ -23,7 +26,13 @@ import {
   toggleStreamerMode,
 } from "./lib/api";
 import { bandFromScore } from "./lib/types";
-import type { AppFlags, Intercept, RepairOutcome, ScanReport } from "./lib/types";
+import type {
+  AppFlags,
+  Intercept,
+  RepairOutcome,
+  ScanReport,
+  WindowsLineStatus,
+} from "./lib/types";
 
 const IDLE_SYNTHESIS =
   "Protection is on. Run a scan to inspect a folder. Samurai will not rewrite your creations.";
@@ -97,6 +106,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [lastScanAt, setLastScanAt] = useState<string | null>(null);
   const [intercepts, setIntercepts] = useState<Intercept[]>([]);
+  const [windowsLine, setWindowsLine] = useState<WindowsLineStatus | null>(null);
+  const [aligning, setAligning] = useState(false);
 
   const liveHeld = intercepts.some(
     (item) => item.kind === "held" || item.kind === "sanctuary_alert",
@@ -134,6 +145,11 @@ export default function App() {
           return;
         }
         setIntercepts(held);
+        const line = await getWindowsLine();
+        if (cancelled) {
+          return;
+        }
+        setWindowsLine(line);
         await refreshImmunity();
       } catch (bootError) {
         if (!cancelled) {
@@ -284,6 +300,19 @@ export default function App() {
     }
   }
 
+  async function handleAlign(): Promise<void> {
+    setAligning(true);
+    setError(null);
+    try {
+      await alignWindowsLine();
+      setWindowsLine(await getWindowsLine());
+    } catch (alignError) {
+      setError(alignError instanceof Error ? alignError.message : String(alignError));
+    } finally {
+      setAligning(false);
+    }
+  }
+
   return (
     <div className="stage">
       <div className="chassis">
@@ -346,6 +375,13 @@ export default function App() {
                 }}
                 onRelease={() => {
                   void handleRelease();
+                }}
+              />
+              <WindowsLinePanel
+                status={windowsLine}
+                aligning={aligning}
+                onAlign={() => {
+                  void handleAlign();
                 }}
               />
               <StreamerPanel

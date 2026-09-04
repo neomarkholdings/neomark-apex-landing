@@ -58,6 +58,15 @@ export interface Intercept {
   kind: "held" | "sanctuary_alert" | string;
 }
 
+export interface WindowsLineStatus {
+  host: string;
+  defenderRealtime?: boolean | null;
+  exclusionsAligned: boolean;
+  paths: string[];
+  processes: string[];
+  summary: string;
+}
+
 export interface AppFlags {
   amoebaAutoRepair: boolean;
   streamerMode: boolean;

@@ -7,10 +7,12 @@
 
 use crate::foothold::hold_reason;
 use crate::sanctuary::is_sanctuary;
+use crate::windows_line::is_transient_lock;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -30,8 +32,20 @@ pub fn watch_roots() -> Vec<PathBuf> {
         roots.push(home.join("Desktop"));
         roots.push(home.join("downloads"));
         roots.push(home.join("desktop"));
+        if let Ok(entries) = fs::read_dir(&home) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name == "OneDrive" || name.starts_with("OneDrive ") {
+                    let path = entry.path();
+                    roots.push(path.join("Downloads"));
+                    roots.push(path.join("Desktop"));
+                }
+            }
+        }
     }
     roots.retain(|path| path.is_dir());
+    roots.sort();
+    roots.dedup();
     roots
 }
 
@@ -42,6 +56,7 @@ pub fn is_incomplete_drop(path: &Path) -> bool {
         .unwrap_or_default();
     name.ends_with(".crdownload")
         || name.ends_with(".part")
+        || name.ends_with(".partial")
         || name.ends_with(".tmp")
         || name.ends_with(".download")
         || name.starts_with('.')
@@ -54,7 +69,19 @@ fn stamp() -> u128 {
         .unwrap_or(0)
 }
 
+fn try_hold_move(src: &Path, dest: &Path) -> std::io::Result<()> {
+    match fs::rename(src, dest) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            fs::copy(src, dest)?;
+            fs::remove_file(src)?;
+            Ok(())
+        }
+    }
+}
+
 /// Move a drop into the install-gate vault. Never touches sanctuary.
+/// Retries when Windows Defender still has the file open.
 pub fn hold_drop(src: &Path, hold_root: &Path) -> Result<PathBuf, String> {
     if is_sanctuary(src) {
         return Err(crate::sanctuary::ERR_SANCTUARY_ZONE.to_string());
@@ -68,14 +95,24 @@ pub fn hold_drop(src: &Path, hold_root: &Path) -> Result<PathBuf, String> {
     if dest.exists() {
         return Err("install-gate vault collision".into());
     }
-    match fs::rename(src, &dest) {
-        Ok(()) => Ok(dest),
-        Err(_) => {
-            fs::copy(src, &dest).map_err(|e| e.to_string())?;
-            fs::remove_file(src).map_err(|e| e.to_string())?;
-            Ok(dest)
+    let mut last = "install-gate hold failed".to_string();
+    for attempt in 0..8u32 {
+        match try_hold_move(src, &dest) {
+            Ok(()) => return Ok(dest),
+            Err(err) => {
+                last = err.to_string();
+                if !is_transient_lock(&err) {
+                    let _ = fs::remove_file(&dest);
+                    return Err(last);
+                }
+                let shift = attempt.min(4);
+                let ms = 40u64.saturating_mul(1u64 << shift);
+                thread::sleep(Duration::from_millis(ms));
+            }
         }
     }
+    let _ = fs::remove_file(&dest);
+    Err(last)
 }
 
 pub fn inspect_and_hold(path: &Path, hold_root: &Path, streamer: bool) -> Option<Intercept> {
@@ -217,6 +254,10 @@ mod tests {
         fs::write(&part, b"partial").unwrap();
         assert!(inspect_and_hold(&part, &vault, false).is_none());
         assert!(part.exists());
+        let edge = root.join("FLStudio-crack.exe.partial");
+        fs::write(&edge, b"partial").unwrap();
+        assert!(inspect_and_hold(&edge, &vault, false).is_none());
+        assert!(edge.exists());
     }
 
     #[test]

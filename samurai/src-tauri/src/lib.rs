@@ -11,6 +11,7 @@ mod install_gate;
 mod samurai_engine;
 mod sanctuary;
 mod watch;
+mod windows_line;
 
 use amoeba_engine::{
     load_immunity_db, remediate, seed_demo_lab as provision_demo_lab, ImmunityDb, RemediateRequest,
@@ -22,6 +23,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
+use windows_line::WindowsLineStatus;
 
 pub struct AppState {
     pub amoeba_auto_repair: Mutex<bool>,
@@ -202,6 +204,24 @@ fn seed_demo_lab(app: AppHandle) -> Result<String, String> {
     Ok(lab.to_string_lossy().into_owned())
 }
 
+fn install_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|parent| parent.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[tauri::command]
+fn get_windows_line(app: AppHandle) -> WindowsLineStatus {
+    let data = data_dir(&app).unwrap_or_else(|_| PathBuf::from("."));
+    windows_line::query_status(&install_dir(), &data)
+}
+
+#[tauri::command]
+fn align_windows_line(app: AppHandle) -> Result<String, String> {
+    windows_line::request_align(&install_dir(), &data_dir(&app)?)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -227,7 +247,9 @@ pub fn run() {
             run_samurai_scan,
             amoeba_remediate,
             get_immunity_log,
-            seed_demo_lab
+            seed_demo_lab,
+            get_windows_line,
+            align_windows_line
         ])
         .run(tauri::generate_context!())
         .expect("error while running Samurai");

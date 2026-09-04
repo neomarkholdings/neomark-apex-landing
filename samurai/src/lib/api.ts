@@ -1,7 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { demoInvoke } from "./demoBackend";
-import type { AppFlags, ImmunityDb, Intercept, RepairOutcome, ScanReport } from "./types";
+import type {
+  AppFlags,
+  ImmunityDb,
+  Intercept,
+  RepairOutcome,
+  ScanReport,
+  WindowsLineStatus,
+} from "./types";
 
 export function isDesktopApp(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -82,6 +89,14 @@ export function getImmunityLog(): Promise<ImmunityDb> {
 
 export function seedDemoLab(): Promise<string> {
   return callCommand<string>("seed_demo_lab");
+}
+
+export function getWindowsLine(): Promise<WindowsLineStatus> {
+  return callCommand<WindowsLineStatus>("get_windows_line");
+}
+
+export function alignWindowsLine(): Promise<string> {
+  return callCommand<string>("align_windows_line");
 }
 
 export async function pickScanFolder(): Promise<string | null> {
