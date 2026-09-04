@@ -24,6 +24,11 @@ const IDLE_SYNTHESIS =
 
 const IDLE_ENGINES = [
   { name: "heuristic", available: true, summary: "Built-in file scanner" },
+  {
+    name: "foothold",
+    available: true,
+    summary: "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.",
+  },
   { name: "yara", available: false, summary: "YARA is not installed" },
   { name: "clamav", available: false, summary: "ClamAV is not installed" },
   { name: "tshark", available: false, summary: "tshark is not installed" },

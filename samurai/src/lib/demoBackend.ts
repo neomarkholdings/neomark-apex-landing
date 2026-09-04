@@ -92,6 +92,83 @@ function remediatePath(path: string, confirmed: boolean): RepairOutcome {
   };
 }
 
+function isDoubleExecName(name: string): boolean {
+  const lower = name.toLowerCase();
+  const parts = lower.split(".");
+  if (parts.length < 3) {
+    return false;
+  }
+  const last = parts[parts.length - 1];
+  const middle = parts[parts.length - 2];
+  const exec = ["exe", "scr", "bat", "cmd", "js", "vbs", "ps1", "com", "pif", "msi"];
+  const bait = [
+    "wav",
+    "mp3",
+    "flac",
+    "aiff",
+    "aif",
+    "m4a",
+    "ogg",
+    "als",
+    "flp",
+    "cpr",
+    "nki",
+    "fst",
+    "mid",
+    "pdf",
+    "zip",
+    "docx",
+  ];
+  return exec.includes(last) && bait.includes(middle);
+}
+
+function isRansomNoteName(name: string): boolean {
+  const n = name.toLowerCase();
+  if (n.endsWith(".wav") || n.endsWith(".mp3") || n.endsWith(".flac")) {
+    return false;
+  }
+  return [
+    "how_to_decrypt",
+    "howtodecrypt",
+    "decrypt_instructions",
+    "files_encrypted",
+    "recover_your_files",
+    "readme_decrypt",
+    "ransom",
+    "_decrypt_",
+  ].some((clue) => n.includes(clue));
+}
+
+function footholdFromTarget(customTarget: string | null): ScanReport["findings"] {
+  if (!customTarget || isSanctuaryPath(customTarget)) {
+    return [];
+  }
+  const name = customTarget.split(/[/\\]/).pop() ?? "";
+  if (isDoubleExecName(name)) {
+    return [
+      {
+        engine: "foothold",
+        detail:
+          "Double-extension drop: a creation or document name hiding an executable.",
+        path: redact(customTarget),
+        severity: "critical",
+      },
+    ];
+  }
+  if (isRansomNoteName(name)) {
+    return [
+      {
+        engine: "foothold",
+        detail:
+          "Ransom-note filename in the sweep. Samurai will not rewrite sanctuary.",
+        path: redact(customTarget),
+        severity: "high",
+      },
+    ];
+  }
+  return [];
+}
+
 function buildScan(targetPath?: string | null): ScanReport {
   const lab = memory.labPath;
   const customTarget = targetPath?.trim() ? targetPath.trim() : null;
@@ -115,11 +192,21 @@ function buildScan(targetPath?: string | null): ScanReport {
     autoActions.push(remediatePath(tainted, false));
   }
 
+  if (!(customTarget && isSanctuaryPath(customTarget))) {
+    findings.push(...footholdFromTarget(customTarget));
+  }
+
   const repaired = autoActions.filter((item) => item.kind === "repaired").length;
   const awaiting = autoActions.filter(
     (item) => item.kind === "awaiting_confirmation",
   ).length;
   const aborted = autoActions.filter((item) => item.kind === "sanctuary_abort").length;
+  const footholdOnly =
+    findings.length > 0 &&
+    findings.every((item) => item.engine === "foothold") &&
+    repaired === 0 &&
+    awaiting === 0 &&
+    aborted === 0;
   let threatScore = findings.length === 0 ? 4 : 78;
   if (aborted > 0) {
     threatScore = 0;
@@ -127,12 +214,17 @@ function buildScan(targetPath?: string | null): ScanReport {
     threatScore = 12;
   } else if (awaiting > 0) {
     threatScore = 64;
+  } else if (footholdOnly) {
+    threatScore = findings.some((item) => item.severity === "critical") ? 72 : 48;
   }
 
   const band = bandFromScore(threatScore);
   const synthesis = (() => {
     if (aborted > 0) {
       return "Sanctuary sector locked; Samurai will not rewrite, quarantine, or restore inside the creations vault.";
+    }
+    if (footholdOnly) {
+      return "Foothold hunt flagged a creator-targeted drop. Inspect the table; Samurai will not rewrite sanctuary.";
     }
     if (threatScore <= 5 && findings.length === 0) {
       return "Chassis is sterile; Samurai reports no antigenic residue on this sweep.";
@@ -163,6 +255,14 @@ function buildScan(targetPath?: string | null): ScanReport {
         name: "heuristic",
         available: true,
         summary: "Inspected 6 file(s).",
+      },
+      {
+        name: "foothold",
+        available: true,
+        summary:
+          findings.filter((item) => item.engine === "foothold").length > 0
+            ? `${findings.filter((item) => item.engine === "foothold").length} creator-threat or persistence hit(s).`
+            : "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.",
       },
       {
         name: "yara",

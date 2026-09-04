@@ -134,6 +134,32 @@ async function run(): Promise<void> {
   );
   check(unrelated.findings.length === 0, "unrelated empty targets do not invent an antigen");
 
+  const bait = await demoInvoke<ScanReport>("run_samurai_scan", {
+    targetPath: "/tmp/pack/kick.wav.exe",
+  });
+  check(
+    bait.findings.some(
+      (item) => item.engine === "foothold" && item.detail.includes("Double-extension"),
+    ),
+    "foothold hunt flags a disguised creation drop",
+  );
+  check(
+    bait.autoActions.length === 0,
+    "foothold hunt does not rewrite the bait file",
+  );
+  check(
+    bait.synthesis.includes("Foothold hunt"),
+    "foothold synthesis tells the operator to inspect, not quarantine blindly",
+  );
+
+  const note = await demoInvoke<ScanReport>("run_samurai_scan", {
+    targetPath: "/tmp/inbox/HOW_TO_DECRYPT.txt",
+  });
+  check(
+    note.findings.some((item) => item.engine === "foothold"),
+    "foothold hunt flags a ransom-note filename",
+  );
+
   console.log(`${passed} passed, ${failed} failed`);
   if (failed > 0) {
     process.exit(1);

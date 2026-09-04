@@ -182,6 +182,16 @@ async function main() {
     check(!allowed.includes("ERR_SANCTUARY_ZONE"), "unrelated paths do not sanctuary-abort");
     check(allowed.includes("No threats in the last scan"), "unrelated paths do not invent a lab antigen");
 
+    await page.locator('input[placeholder*="built-in test folder"]').fill("/tmp/pack/kick.wav.exe");
+    await runScan(page);
+    const bait = await page.locator("body").innerText();
+    check(bait.includes("Double-extension"), "foothold hunt flags a disguised .wav.exe drop");
+    check(bait.includes("Foothold hunt") || bait.toUpperCase().includes("FOOTHOLD"), "foothold hunt is visible on the chassis");
+    check(
+      await page.getByRole("button", { name: /^RESTORE$/ }).isDisabled(),
+      "Amoeba does not arm RESTORE for a foothold report — no silent quarantine",
+    );
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_mobile.png`, fullPage: true });
 
