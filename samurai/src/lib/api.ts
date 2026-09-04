@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { demoInvoke } from "./demoBackend";
-import type { AppFlags, ImmunityDb, RepairOutcome, ScanReport } from "./types";
+import type { AppFlags, ImmunityDb, Intercept, RepairOutcome, ScanReport } from "./types";
 
 export function isDesktopApp(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -27,6 +27,14 @@ export function toggleAmoebaAutoRepair(): Promise<boolean> {
 
 export function toggleStreamerMode(): Promise<boolean> {
   return callCommand<boolean>("toggle_streamer_mode");
+}
+
+export function toggleLiveWatch(): Promise<boolean> {
+  return callCommand<boolean>("toggle_live_watch");
+}
+
+export function getIntercepts(): Promise<Intercept[]> {
+  return callCommand<Intercept[]>("get_intercepts");
 }
 
 export function runSamuraiScan(targetPath?: string): Promise<ScanReport> {

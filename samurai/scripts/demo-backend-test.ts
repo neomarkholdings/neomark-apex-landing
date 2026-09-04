@@ -24,6 +24,9 @@ async function resetConsole(): Promise<void> {
   if (flags.streamerMode) {
     await demoInvoke("toggle_streamer_mode");
   }
+  if (!flags.liveWatch) {
+    await demoInvoke("toggle_live_watch");
+  }
 }
 
 async function run(): Promise<void> {
@@ -148,8 +151,13 @@ async function run(): Promise<void> {
     "foothold hunt does not rewrite the bait file",
   );
   check(
-    bait.synthesis.includes("Foothold hunt"),
+    bait.synthesis.includes("Foothold hunt") ||
+      bait.synthesis.includes("Install gate held"),
     "foothold synthesis tells the operator to inspect, not quarantine blindly",
+  );
+  check(
+    (bait.intercepts ?? []).some((item) => item.kind === "held"),
+    "install gate holds a double-extension drop when armed",
   );
 
   const note = await demoInvoke<ScanReport>("run_samurai_scan", {
@@ -158,6 +166,36 @@ async function run(): Promise<void> {
   check(
     note.findings.some((item) => item.engine === "foothold"),
     "foothold hunt flags a ransom-note filename",
+  );
+
+  const warez = await demoInvoke<ScanReport>("run_samurai_scan", {
+    targetPath: "/tmp/Downloads/FLStudio-crack.exe",
+  });
+  check(
+    warez.findings.some((item) => item.detail.includes("Crack/keygen")),
+    "install gate hunts crack/keygen loaders",
+  );
+  check(
+    (warez.intercepts ?? []).some((item) => item.kind === "held"),
+    "install gate holds the crack drop instead of letting it sit in Downloads",
+  );
+  check(
+    warez.synthesis.includes("Install gate held"),
+    "install gate synthesis says the drop was held",
+  );
+  check(warez.autoActions.length === 0, "crack drops are not Amoeba-rewritten");
+
+  await demoInvoke("toggle_live_watch");
+  const unarmed = await demoInvoke<ScanReport>("run_samurai_scan", {
+    targetPath: "/tmp/Downloads/photoshop_keygen.exe",
+  });
+  check(
+    unarmed.findings.some((item) => item.engine === "foothold"),
+    "foothold still reports keygens when the gate is on standby",
+  );
+  check(
+    (unarmed.intercepts ?? []).length === 0,
+    "standby install gate does not hold the drop",
   );
 
   console.log(`${passed} passed, ${failed} failed`);

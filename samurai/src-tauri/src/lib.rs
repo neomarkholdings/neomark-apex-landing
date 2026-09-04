@@ -5,12 +5,15 @@
 
 mod amoeba_engine;
 mod foothold;
+mod install_gate;
 mod samurai_engine;
 mod sanctuary;
+mod watch;
 
 use amoeba_engine::{
     load_immunity_db, remediate, seed_demo_lab as provision_demo_lab, ImmunityDb, RemediateRequest,
 };
+use install_gate::Intercept;
 use samurai_engine::ScanReport;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -20,6 +23,8 @@ use tauri::{AppHandle, Manager, State};
 pub struct AppState {
     pub amoeba_auto_repair: Mutex<bool>,
     pub streamer_mode: Mutex<bool>,
+    pub live_watch: Mutex<bool>,
+    pub intercepts: Mutex<Vec<Intercept>>,
 }
 
 #[derive(Serialize)]
@@ -27,6 +32,7 @@ pub struct AppState {
 struct AppFlags {
     amoeba_auto_repair: bool,
     streamer_mode: bool,
+    live_watch: bool,
 }
 
 fn read_flag(lock: &Mutex<bool>) -> bool {
@@ -73,11 +79,23 @@ fn tools_dir(app: &AppHandle) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("engines"))
 }
 
+fn remember_intercepts(state: &AppState, incoming: &[Intercept]) {
+    if incoming.is_empty() {
+        return;
+    }
+    let mut log = state.intercepts.lock().unwrap_or_else(|e| e.into_inner());
+    for item in incoming.iter().rev() {
+        log.insert(0, item.clone());
+    }
+    log.truncate(40);
+}
+
 #[tauri::command]
 fn get_app_state(state: State<AppState>) -> AppFlags {
     AppFlags {
         amoeba_auto_repair: read_flag(&state.amoeba_auto_repair),
         streamer_mode: read_flag(&state.streamer_mode),
+        live_watch: read_flag(&state.live_watch),
     }
 }
 
@@ -92,6 +110,20 @@ fn toggle_streamer_mode(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
+fn toggle_live_watch(state: State<AppState>) -> bool {
+    toggle_flag(&state.live_watch)
+}
+
+#[tauri::command]
+fn get_intercepts(state: State<AppState>) -> Vec<Intercept> {
+    state
+        .intercepts
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+#[tauri::command]
 fn run_samurai_scan(
     app: AppHandle,
     state: State<AppState>,
@@ -99,14 +131,19 @@ fn run_samurai_scan(
 ) -> Result<ScanReport, String> {
     let dir = data_dir(&app)?;
     let immunity = dir.join("immunity_db.json");
-    samurai_engine::run_scan(
+    let hold_dir = dir.join("install_gate");
+    let live = read_flag(&state.live_watch);
+    let report = samurai_engine::run_scan(
         target_path,
         read_flag(&state.streamer_mode),
         read_flag(&state.amoeba_auto_repair),
         &dir,
         &immunity,
         &tools_dir(&app),
-    )
+        if live { Some(hold_dir.as_path()) } else { None },
+    )?;
+    remember_intercepts(&state, &report.intercepts);
+    Ok(report)
 }
 
 #[tauri::command]
@@ -152,11 +189,19 @@ pub fn run() {
         .manage(AppState {
             amoeba_auto_repair: Mutex::new(true),
             streamer_mode: Mutex::new(false),
+            live_watch: Mutex::new(true),
+            intercepts: Mutex::new(Vec::new()),
+        })
+        .setup(|app| {
+            watch::spawn(app.handle().clone());
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_app_state,
             toggle_amoeba_auto_repair,
             toggle_streamer_mode,
+            toggle_live_watch,
+            get_intercepts,
             run_samurai_scan,
             amoeba_remediate,
             get_immunity_log,

@@ -121,44 +121,129 @@ fn redact(path: &str, streamer: bool) -> String {
         .unwrap_or_else(|| "[STREAM-SHIELD]".into())
 }
 
+pub fn looks_like_warez_drop(name: &str) -> bool {
+    let n = name.to_lowercase();
+    if is_creation_extension(&n) && !is_double_exec_extension(&n) {
+        return false;
+    }
+    let needles = [
+        "crack",
+        "keygen",
+        "keygens",
+        "activator",
+        "nulled",
+        "warez",
+        "patcher",
+        "serialz",
+        "codecpack",
+        "codec-pack",
+    ];
+    needles.iter().any(|needle| n.contains(needle))
+        || n == "patch.exe"
+        || n == "loader.exe"
+}
+
+pub fn is_masquerade_system_binary(path: &Path) -> bool {
+    let name = lower_name(path);
+    let masquerade = [
+        "svchost.exe",
+        "lsass.exe",
+        "services.exe",
+        "winlogon.exe",
+        "csrss.exe",
+        "smss.exe",
+    ];
+    if !masquerade.contains(&name.as_str()) {
+        return false;
+    }
+    let joined = path.to_string_lossy().to_lowercase().replace('\\', "/");
+    !joined.contains("/windows/system32") && !joined.contains("/windows/syswow64")
+}
+
+fn is_installer_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("setup") || n.contains("install") || n.contains("installer")
+}
+
+pub fn parent_is_crack_kit(path: &Path) -> bool {
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    let mut crack = false;
+    let mut installer = false;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if looks_like_warez_drop(&name) {
+            crack = true;
+        }
+        if is_installer_name(&name) {
+            installer = true;
+        }
+    }
+    crack && installer
+}
+
+/// Why this drop should be held by the install gate. `None` means leave it.
+pub fn hold_reason(path: &Path) -> Option<String> {
+    let name = lower_name(path);
+    if name.is_empty() {
+        return None;
+    }
+    if is_double_exec_extension(&name) {
+        return Some(
+            "Double-extension drop: a creation or document name hiding an executable.".into(),
+        );
+    }
+    if looks_like_warez_drop(&name) {
+        return Some(
+            "Crack/keygen/activator drop — common trojan, RAT, or ransomware loader.".into(),
+        );
+    }
+    if looks_like_ransom_note(&name) {
+        return Some("Ransom-note filename in a drop folder.".into());
+    }
+    if is_masquerade_system_binary(path) {
+        return Some(
+            "System binary name dropped outside System32 — classic RAT / loader masquerade.".into(),
+        );
+    }
+    if is_creation_extension(&name) {
+        if let Some(header) = read_header(path, 4) {
+            if is_executable_payload(&header) {
+                return Some(
+                    "Executable payload disguised as audio or a DAW project.".into(),
+                );
+            }
+        }
+    }
+    if parent_is_crack_kit(path) && EXEC_TAIL.contains(&extension_of(&name)) {
+        return Some("Installer sitting next to a crack/keygen in the same folder.".into());
+    }
+    None
+}
+
 /// Hunt files inside the scan target. Never mutates them.
 pub fn hunt_scan_files(files: &[PathBuf], streamer: bool) -> Vec<Finding> {
     let mut findings = Vec::new();
     for path in files {
-        let name = lower_name(path);
-        if name.is_empty() {
+        let Some(reason) = hold_reason(path) else {
             continue;
-        }
+        };
         let shown = redact(&path.to_string_lossy(), streamer);
-        if is_double_exec_extension(&name) {
-            findings.push(Finding {
-                engine: "foothold".into(),
-                detail: "Double-extension drop: a creation or document name hiding an executable.".into(),
-                path: Some(shown.clone()),
-                severity: Severity::Critical,
-            });
-            continue;
-        }
-        if looks_like_ransom_note(&name) {
-            findings.push(Finding {
-                engine: "foothold".into(),
-                detail: "Ransom-note filename in the sweep. Samurai will not rewrite sanctuary.".into(),
-                path: Some(shown.clone()),
-                severity: Severity::High,
-            });
-        }
-        if is_creation_extension(&name) {
-            if let Some(header) = read_header(path, 4) {
-                if is_executable_payload(&header) {
-                    findings.push(Finding {
-                        engine: "foothold".into(),
-                        detail: "Executable payload disguised as audio or a DAW project. Reported only — creations stay untouched.".into(),
-                        path: Some(shown),
-                        severity: Severity::Critical,
-                    });
-                }
-            }
-        }
+        let severity = if reason.contains("Ransom-note") {
+            Severity::High
+        } else {
+            Severity::Critical
+        };
+        findings.push(Finding {
+            engine: "foothold".into(),
+            detail: reason,
+            path: Some(shown),
+            severity,
+        });
     }
     findings
 }
@@ -217,6 +302,7 @@ pub fn hunt_persistence_in(home: &Path, streamer: bool) -> Vec<Finding> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn flags_wav_exe_double_extension() {
@@ -224,6 +310,25 @@ mod tests {
         assert!(is_double_exec_extension("Invoice.PDF.SCR"));
         assert!(!is_double_exec_extension("vocal.wav"));
         assert!(!is_double_exec_extension("setup.exe"));
+    }
+
+    #[test]
+    fn flags_crack_keygen_names_not_audio() {
+        assert!(looks_like_warez_drop("FLStudio-crack.exe"));
+        assert!(looks_like_warez_drop("photoshop_keygen.exe"));
+        assert!(looks_like_warez_drop("nulled-plugin.zip"));
+        assert!(!looks_like_warez_drop("crackle.wav"));
+        assert!(!looks_like_warez_drop("FLStudio_installer.exe"));
+    }
+
+    #[test]
+    fn hold_reason_masquerade_outside_system32() {
+        assert!(is_masquerade_system_binary(Path::new(
+            "/home/ronin/Downloads/svchost.exe"
+        )));
+        assert!(!is_masquerade_system_binary(Path::new(
+            "C:/Windows/System32/svchost.exe"
+        )));
     }
 
     #[test]

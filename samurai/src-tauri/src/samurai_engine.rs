@@ -90,6 +90,8 @@ pub struct ScanReport {
     pub streamer_mode: bool,
     pub scanned_files: u32,
     pub lab_path: Option<String>,
+    #[serde(default)]
+    pub intercepts: Vec<crate::install_gate::Intercept>,
 }
 
 pub fn band_from_score(score: u8) -> ThreatBand {
@@ -566,6 +568,7 @@ pub fn run_scan(
     data_dir: &Path,
     immunity_db: &Path,
     tools_dir: &Path,
+    hold_root: Option<&Path>,
 ) -> Result<ScanReport, String> {
     fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let lab = ensure_demo_lab(data_dir)?;
@@ -698,7 +701,38 @@ pub fn run_scan(
         && repaired == 0
         && awaiting == 0
         && aborted == 0;
-    let synthesis = if foothold_only {
+
+    let intercepts = if let Some(root) = hold_root {
+        crate::install_gate::hold_scan_files(&files, root, streamer_mode)
+    } else {
+        Vec::new()
+    };
+    let held = intercepts.iter().filter(|item| item.kind == "held").count();
+    statuses.push(EngineStatus {
+        name: "gate".into(),
+        available: hold_root.is_some(),
+        summary: if held == 0 {
+            if hold_root.is_some() {
+                "Install gate armed: crack/keygen/RAT drops are held on write.".into()
+            } else {
+                "Install gate standby.".into()
+            }
+        } else {
+            format!("{held} drop(s) moved to the install-gate vault.")
+        },
+    });
+
+    let synthesis = if held > 0 {
+        let core = "Install gate held a high-risk drop before it could run. Creations were not rewritten.";
+        if streamer_mode {
+            format!(
+                "{}, with streamer shield masking path readout.",
+                core.trim_end_matches('.')
+            )
+        } else {
+            core.to_string()
+        }
+    } else if foothold_only {
         let core = "Foothold hunt flagged a creator-targeted drop. Inspect the table; Samurai will not rewrite sanctuary.";
         if streamer_mode {
             format!(
@@ -729,6 +763,7 @@ pub fn run_scan(
         streamer_mode,
         scanned_files: files.len() as u32,
         lab_path: Some(lab.to_string_lossy().into_owned()),
+        intercepts,
     })
 }
 
@@ -806,7 +841,7 @@ mod tests {
     fn second_scan_stays_clean_after_auto_repair() {
         let root = temp_lab("clean-second");
         let immunity = root.join("immunity_db.json");
-        let first = run_scan(None, false, true, &root, &immunity, &root.join("engines")).expect("first scan");
+        let first = run_scan(None, false, true, &root, &immunity, &root.join("engines"), None).expect("first scan");
         assert!(
             first
                 .auto_actions
@@ -821,7 +856,7 @@ mod tests {
             "host still dirty after auto-repair: {host}"
         );
 
-        let second = run_scan(None, false, true, &root, &immunity, &root.join("engines")).expect("second scan");
+        let second = run_scan(None, false, true, &root, &immunity, &root.join("engines"), None).expect("second scan");
         assert!(
             second
                 .findings
@@ -846,7 +881,7 @@ mod tests {
     fn ask_mode_leaves_host_dirty_until_confirmed() {
         let root = temp_lab("ask");
         let immunity = root.join("immunity_db.json");
-        let report = run_scan(None, false, false, &root, &immunity, &root.join("engines")).expect("ask scan");
+        let report = run_scan(None, false, false, &root, &immunity, &root.join("engines"), None).expect("ask scan");
         assert!(
             report
                 .auto_actions
@@ -884,6 +919,7 @@ mod tests {
             &root,
             &immunity,
             &root.join("engines"),
+            None,
         )
         .expect("user folder scan");
         assert_eq!(
@@ -911,6 +947,7 @@ mod tests {
             &root,
             &immunity,
             &root.join("engines"),
+            None,
         )
         .expect("sanctuary scan");
         assert!(
@@ -932,7 +969,7 @@ mod tests {
     fn streamer_mode_redacts_paths_and_notes_shield() {
         let root = temp_lab("stream");
         let immunity = root.join("immunity_db.json");
-        let report = run_scan(None, true, true, &root, &immunity, &root.join("engines")).expect("streamer scan");
+        let report = run_scan(None, true, true, &root, &immunity, &root.join("engines"), None).expect("streamer scan");
         for finding in &report.findings {
             if let Some(path) = &finding.path {
                 assert!(
@@ -979,6 +1016,7 @@ mod tests {
             &root,
             &immunity,
             &root.join("engines"),
+            None,
         )
         .expect("disguised scan");
         assert!(
@@ -1020,6 +1058,7 @@ mod tests {
             &root,
             &immunity,
             &root.join("engines"),
+            None,
         )
         .expect("sanctuary disguised scan");
         assert!(
@@ -1041,5 +1080,38 @@ mod tests {
         );
         assert_eq!(fs::read(&vocal).unwrap(), b"MZ\x90\x00not-a-riff");
         assert!(!music.join(".amoeba_shadow").exists());
+    }
+
+    #[test]
+    fn install_gate_holds_crack_drop_outside_sanctuary() {
+        let root = temp_lab("gate-crack");
+        let folder = root.join("Downloads");
+        let vault = root.join("install_gate");
+        fs::create_dir_all(&folder).unwrap();
+        let bait = folder.join("FLStudio-crack.exe");
+        fs::write(&bait, b"MZ-warez-loader").unwrap();
+        let immunity = root.join("immunity_db.json");
+        let report = run_scan(
+            Some(folder.to_string_lossy().into_owned()),
+            false,
+            true,
+            &root,
+            &immunity,
+            &root.join("engines"),
+            Some(&vault),
+        )
+        .expect("gate scan");
+        assert!(
+            report.intercepts.iter().any(|item| item.kind == "held"),
+            "expected a held intercept, got {:?}",
+            report.intercepts
+        );
+        assert!(!bait.exists(), "crack drop should have been moved");
+        assert!(report.synthesis.contains("Install gate held"));
+        assert!(
+            report.auto_actions.is_empty(),
+            "install gate must not Amoeba-rewrite the bait: {:?}",
+            report.auto_actions
+        );
     }
 }

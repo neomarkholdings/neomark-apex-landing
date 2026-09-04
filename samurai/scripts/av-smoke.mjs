@@ -192,6 +192,20 @@ async function main() {
       "Amoeba does not arm RESTORE for a foothold report — no silent quarantine",
     );
 
+    await page.locator('input[placeholder*="built-in test folder"]').fill("/tmp/Downloads/FLStudio-crack.exe");
+    await runScan(page);
+    const warez = await page.locator("body").innerText();
+    check(
+      warez.includes("Crack/keygen") || warez.toLowerCase().includes("crack/keygen"),
+      "install gate flags a crack/keygen drop",
+    );
+    check(warez.includes("INSTALL GATE") || warez.includes("Install gate held"), "install gate hold is visible");
+    check(warez.includes("HELD") || warez.includes("ARMED"), "install gate shows a held or armed state");
+    check(
+      await page.getByRole("button", { name: /^RESTORE$/ }).isDisabled(),
+      "Amoeba does not restore a held crack drop",
+    );
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_mobile.png`, fullPage: true });
 

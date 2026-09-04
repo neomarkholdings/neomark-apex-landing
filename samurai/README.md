@@ -131,7 +131,8 @@ npm test
 ## Product rules
 
 - Scan engines: local heuristic, **foothold hunt**, YARA, ClamAV (`clamscan`), and tshark protocol sampling. Results reduce to a **Threat Score (0–100)** and one sentence — raw terminal output never hits the UI.
-- **Foothold hunt** is the creator-EDR layer Norton-style suites do not offer: it flags executables disguised as `.wav` / DAW projects, double-extension drops (`kick.wav.exe`), ransom-note filenames, and hostile autostart commands. It **reports** those hits. It does **not** quarantine, cloud-upload, or rewrite `/Music` or `/Studio-Projects`.
+- **Install gate** watches Downloads and Desktop on the desktop app. Crack/keygen/activator bait, double-extension drops, and system binaries masquerading outside System32 are **moved into an install-gate vault** before they can run. Sanctuary (`/Music`, `/Studio-Projects`, `neomark`, `retroblazed`) is alert-only — never held, never rewritten.
+- **Foothold hunt** flags executables disguised as `.wav` / DAW projects, ransom-note filenames, and hostile autostart. It **reports** those hits. Content infections still restore from `.amoeba_shadow` outside sanctuary.
 - Amoeba restores from `{parent}/.amoeba_shadow/{file}` (and a Volume Shadow Copy hook on Windows). It does not “optimize” or alter creations. Foothold hits stay detect-only so a fake sample pack is never silently deleted from a session folder.
 - Streamer shield redacts paths and suppresses packet telemetry.
 - Any remediation targeting a sanctuary path aborts with:

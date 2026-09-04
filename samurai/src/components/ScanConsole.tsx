@@ -1,5 +1,5 @@
 import { repairKindLabel } from "../lib/types";
-import type { EngineStatus, Finding, RepairOutcome, Severity } from "../lib/types";
+import type { EngineStatus, Finding, Intercept, RepairOutcome, Severity } from "../lib/types";
 import { DeckPanel, SectionHead } from "./Deck";
 import { Led } from "./HardwareBits";
 
@@ -16,6 +16,7 @@ interface ScanConsoleProps {
   engines: EngineStatus[];
   scannedFiles: number;
   hasScanned: boolean;
+  intercepts: Intercept[];
 }
 
 function actionForFinding(
@@ -70,6 +71,7 @@ export function ScanConsole({
   engines,
   scannedFiles,
   hasScanned,
+  intercepts,
 }: ScanConsoleProps) {
   const canRestore = pending?.kind === "awaiting_confirmation";
 
@@ -160,6 +162,16 @@ export function ScanConsole({
         </div>
       ) : null}
 
+      {intercepts.length > 0 ? (
+        <div className="lcd-face critical mt-3 rounded-[10px] px-3 py-2.5">
+          <p className="relative font-display text-[9px] tracking-[0.18em]">
+            INSTALL GATE · {intercepts[0].kind.toUpperCase()} ·{" "}
+            {intercepts[0].originalPath}
+          </p>
+          <p className="relative mt-1 font-readout text-[13px]">{intercepts[0].reason}</p>
+        </div>
+      ) : null}
+
       <div className="well mt-3 flex-1">
         <div className="threat-row head font-display text-[9px] tracking-[0.16em] text-silver/50">
           <span>FILE</span>
@@ -205,7 +217,19 @@ export function ScanConsole({
                   {finding.severity}
                 </p>
                 <p className="font-readout text-[11px] uppercase text-silver/80">
-                  {action ? repairKindLabel(action.kind) : "DETECTED"}
+                  {intercepts.some(
+                    (item) =>
+                      item.kind === "held" &&
+                      (item.originalPath === finding.path ||
+                        (finding.path &&
+                          item.originalPath.endsWith(
+                            finding.path.split(/[/\\]/).pop() ?? "",
+                          ))),
+                  )
+                    ? "HELD"
+                    : action
+                      ? repairKindLabel(action.kind)
+                      : "DETECTED"}
                 </p>
               </div>
             );
