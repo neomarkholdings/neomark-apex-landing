@@ -38,22 +38,26 @@ import type {
 const IDLE_SYNTHESIS =
   "Protection is on. Run a scan to inspect a folder. Samurai will not rewrite your creations.";
 
-const IDLE_ENGINES = [
-  { name: "heuristic", available: true, summary: "Built-in file scanner" },
-  {
-    name: "foothold",
-    available: true,
-    summary: "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.",
-  },
-  {
-    name: "gate",
-    available: true,
-    summary: "Install gate armed: crack/keygen/RAT drops are held on write. Nested archives are inspected.",
-  },
-  { name: "yara", available: false, summary: "YARA is not installed" },
-  { name: "clamav", available: false, summary: "ClamAV is not installed" },
-  { name: "tshark", available: false, summary: "tshark is not installed" },
-];
+function idleEngines(liveWatch: boolean): ScanReport["engineStatuses"] {
+  return [
+    { name: "heuristic", available: true, summary: "Built-in file scanner" },
+    {
+      name: "foothold",
+      available: true,
+      summary: "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.",
+    },
+    {
+      name: "gate",
+      available: liveWatch,
+      summary: liveWatch
+        ? "Install gate armed: crack/keygen/RAT drops are held on write. Nested archives are inspected."
+        : "Install gate standby. Holds are paused.",
+    },
+    { name: "yara", available: false, summary: "YARA is not installed" },
+    { name: "clamav", available: false, summary: "ClamAV is not installed" },
+    { name: "tshark", available: false, summary: "tshark is not installed" },
+  ];
+}
 
 function resolveRepairPath(pending: RepairOutcome, labPath: string | null): string {
   if (!pending.path.startsWith("[STREAM-SHIELD]/")) {
@@ -458,7 +462,7 @@ export default function App() {
                 pending={pending}
                 findings={report?.findings ?? []}
                 actions={report?.autoActions ?? []}
-                engines={report?.engineStatuses ?? IDLE_ENGINES}
+                engines={report?.engineStatuses ?? idleEngines(flags.liveWatch)}
                 scannedFiles={report?.scannedFiles ?? 0}
                 hasScanned={Boolean(lastScanAt)}
                 intercepts={intercepts}
