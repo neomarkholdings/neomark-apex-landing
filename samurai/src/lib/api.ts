@@ -37,6 +37,32 @@ export function getIntercepts(): Promise<Intercept[]> {
   return callCommand<Intercept[]>("get_intercepts");
 }
 
+export function releaseIntercept(
+  holdPath: string,
+  originalPath: string,
+): Promise<string> {
+  return callCommand<string>("release_intercept", { holdPath, originalPath });
+}
+
+export function simulateDrop(
+  path: string,
+  innerNames?: string[],
+): Promise<Intercept | null> {
+  return callCommand<Intercept | null>("simulate_drop", { path, innerNames });
+}
+
+export async function subscribeIntercepts(
+  onIntercept: (item: Intercept) => void,
+): Promise<() => void> {
+  if (!isDesktopApp()) {
+    return () => {};
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<Intercept>("samurai-intercept", (event) => {
+    onIntercept(event.payload);
+  });
+}
+
 export function runSamuraiScan(targetPath?: string): Promise<ScanReport> {
   return callCommand<ScanReport>("run_samurai_scan", {
     targetPath: targetPath?.trim() ? targetPath.trim() : null,

@@ -13,8 +13,11 @@ import {
   getIntercepts,
   isDesktopApp,
   pickScanFolder,
+  releaseIntercept,
   runSamuraiScan,
   seedDemoLab,
+  simulateDrop,
+  subscribeIntercepts,
   toggleAmoebaAutoRepair,
   toggleLiveWatch,
   toggleStreamerMode,
@@ -35,7 +38,7 @@ const IDLE_ENGINES = [
   {
     name: "gate",
     available: true,
-    summary: "Install gate armed: crack/keygen/RAT drops are held on write.",
+    summary: "Install gate armed: crack/keygen/RAT drops are held on write. Nested archives are inspected.",
   },
   { name: "yara", available: false, summary: "YARA is not installed" },
   { name: "clamav", available: false, summary: "ClamAV is not installed" },
@@ -53,9 +56,16 @@ function resolveRepairPath(pending: RepairOutcome, labPath: string | null): stri
   return `${labPath}/${basename}`;
 }
 
-function protectionLabel(scanning: boolean, band: ScanReport["band"] | "nominal"): string {
+function protectionLabel(
+  scanning: boolean,
+  band: ScanReport["band"] | "nominal",
+  gateHold: boolean,
+): string {
   if (scanning) {
     return "SCANNING";
+  }
+  if (gateHold) {
+    return "GATE HOLD";
   }
   switch (band) {
     case "nominal":
@@ -88,9 +98,17 @@ export default function App() {
   const [lastScanAt, setLastScanAt] = useState<string | null>(null);
   const [intercepts, setIntercepts] = useState<Intercept[]>([]);
 
-  const score = report?.threatScore ?? 0;
-  const band = report?.band ?? bandFromScore(score);
-  const synthesis = report?.synthesis ?? IDLE_SYNTHESIS;
+  const liveHeld = intercepts.some(
+    (item) => item.kind === "held" || item.kind === "sanctuary_alert",
+  );
+  const gateHold = liveHeld && !lastScanAt;
+  const score = report?.threatScore ?? (gateHold ? 72 : 0);
+  const band = gateHold ? "critical" : (report?.band ?? bandFromScore(score));
+  const synthesis =
+    report?.synthesis ??
+    (gateHold
+      ? "Install gate held a high-risk drop before it could run. Creations were not rewritten."
+      : IDLE_SYNTHESIS);
 
   const refreshImmunity = useCallback(async () => {
     const log = await getImmunityLog();
@@ -99,29 +117,66 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    let timer: number | undefined;
+
     async function boot(): Promise<void> {
       try {
-        const [state, lab, held] = await Promise.all([
-          getAppState(),
-          seedDemoLab(),
-          getIntercepts(),
-        ]);
+        const state = await getAppState();
+        const lab = await seedDemoLab();
         if (cancelled) {
           return;
         }
         setFlags(state);
         setLabPath(lab);
+        const held = await getIntercepts();
+        if (cancelled) {
+          return;
+        }
         setIntercepts(held);
         await refreshImmunity();
       } catch (bootError) {
         if (!cancelled) {
           setError(bootError instanceof Error ? bootError.message : String(bootError));
         }
+        return;
+      }
+      if (cancelled) {
+        return;
+      }
+      timer = window.setInterval(() => {
+        void getIntercepts().then((held) => {
+          if (!cancelled) {
+            setIntercepts(held);
+          }
+        });
+      }, 2000);
+      unlisten = await subscribeIntercepts((item) => {
+        if (!cancelled) {
+          setIntercepts((current) => [item, ...current].slice(0, 40));
+        }
+      });
+      if (!isDesktopApp()) {
+        window.__SAMURAI_DEMO__ = {
+          simulateDrop: async (path, innerNames) => {
+            const intercept = await simulateDrop(path, innerNames);
+            const held = await getIntercepts();
+            if (!cancelled) {
+              setIntercepts(held);
+            }
+            return intercept;
+          },
+        };
       }
     }
     void boot();
     return () => {
       cancelled = true;
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+      }
+      unlisten?.();
+      delete window.__SAMURAI_DEMO__;
     };
   }, [refreshImmunity]);
 
@@ -215,6 +270,20 @@ export default function App() {
     setFlags((current) => ({ ...current, liveWatch: value }));
   }
 
+  async function handleRelease(): Promise<void> {
+    const latest = intercepts[0];
+    if (!latest || latest.kind !== "held" || !latest.holdPath) {
+      return;
+    }
+    setError(null);
+    try {
+      await releaseIntercept(latest.holdPath, latest.originalPath);
+      setIntercepts(await getIntercepts());
+    } catch (releaseError) {
+      setError(releaseError instanceof Error ? releaseError.message : String(releaseError));
+    }
+  }
+
   return (
     <div className="stage">
       <div className="chassis">
@@ -239,7 +308,7 @@ export default function App() {
             >
               <Led on silver={!scanning && band === "nominal"} />
               <span className="font-display text-[10px] tracking-[0.18em]">
-                {protectionLabel(scanning, band)}
+                {protectionLabel(scanning, band, gateHold)}
               </span>
             </div>
             <div className="status-lcd lcd-face">
@@ -274,6 +343,9 @@ export default function App() {
                 intercepts={intercepts}
                 onToggle={() => {
                   void handleLiveWatchToggle();
+                }}
+                onRelease={() => {
+                  void handleRelease();
                 }}
               />
               <StreamerPanel

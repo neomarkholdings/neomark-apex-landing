@@ -121,13 +121,32 @@ fn redact(path: &str, streamer: bool) -> String {
         .unwrap_or_else(|| "[STREAM-SHIELD]".into())
 }
 
+/// `crack` as warez, not sample-pack English (`crackle`, `crackling`).
+pub fn has_warez_crack_token(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    let mut from = 0;
+    while from + 5 <= n.len() {
+        let rest = &n[from..];
+        let Some(rel) = rest.find("crack") else {
+            return false;
+        };
+        let at = from + rel;
+        let after = &n[at + 5..];
+        if after.starts_with("le") || after.starts_with("ling") || after.starts_with("ly") {
+            from = at + 5;
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
 pub fn looks_like_warez_drop(name: &str) -> bool {
     let n = name.to_lowercase();
     if is_creation_extension(&n) && !is_double_exec_extension(&n) {
         return false;
     }
     let needles = [
-        "crack",
         "keygen",
         "keygens",
         "activator",
@@ -138,7 +157,8 @@ pub fn looks_like_warez_drop(name: &str) -> bool {
         "codecpack",
         "codec-pack",
     ];
-    needles.iter().any(|needle| n.contains(needle))
+    has_warez_crack_token(&n)
+        || needles.iter().any(|needle| n.contains(needle))
         || n == "patch.exe"
         || n == "loader.exe"
 }
@@ -219,6 +239,11 @@ pub fn hold_reason(path: &Path) -> Option<String> {
             }
         }
     }
+    if crate::archive::is_container_name(&name) {
+        if let Some(reason) = crate::archive::hold_reason_from_container(path) {
+            return Some(reason);
+        }
+    }
     if parent_is_crack_kit(path) && EXEC_TAIL.contains(&extension_of(&name)) {
         return Some("Installer sitting next to a crack/keygen in the same folder.".into());
     }
@@ -254,6 +279,7 @@ fn persistence_dirs(home: &Path) -> Vec<PathBuf> {
         home.join(".config/systemd/user"),
         home.join("Library/LaunchAgents"),
         home.join("AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"),
+        home.join("AppData/Local/Microsoft/Windows/Tasks"),
     ]
 }
 
@@ -296,7 +322,70 @@ pub fn hunt_persistence_in(home: &Path, streamer: bool) -> Vec<Finding> {
             }
         }
     }
+    findings.extend(hunt_run_values(
+        &parse_reg_query(&read_windows_run_text()),
+        streamer,
+    ));
     findings
+}
+
+/// Parse `reg query HKCU\...\Run` output into command strings.
+pub fn parse_reg_query(text: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("HKEY_") {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        let marker = if let Some(idx) = lower.find("reg_sz") {
+            idx + "reg_sz".len()
+        } else if let Some(idx) = lower.find("reg_expand_sz") {
+            idx + "reg_expand_sz".len()
+        } else {
+            continue;
+        };
+        let value = trimmed.get(marker..).unwrap_or("").trim();
+        if !value.is_empty() {
+            values.push(value.to_string());
+        }
+    }
+    values
+}
+
+pub fn hunt_run_values(values: &[String], streamer: bool) -> Vec<Finding> {
+    values
+        .iter()
+        .filter(|value| line_is_hostile(value))
+        .map(|value| Finding {
+            engine: "foothold".into(),
+            detail: "Hostile persistence command in a Windows Run key.".into(),
+            path: Some(redact(value, streamer)),
+            severity: Severity::High,
+        })
+        .collect()
+}
+
+fn read_windows_run_text() -> String {
+    if cfg!(test) || !cfg!(windows) {
+        return String::new();
+    }
+    let keys = [
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce",
+    ];
+    let mut combined = String::new();
+    for key in keys {
+        let Ok(output) = std::process::Command::new("reg")
+            .args(["query", key])
+            .output()
+        else {
+            continue;
+        };
+        combined.push_str(&String::from_utf8_lossy(&output.stdout));
+        combined.push('\n');
+    }
+    combined
 }
 
 #[cfg(test)]
@@ -317,7 +406,10 @@ mod tests {
         assert!(looks_like_warez_drop("FLStudio-crack.exe"));
         assert!(looks_like_warez_drop("photoshop_keygen.exe"));
         assert!(looks_like_warez_drop("nulled-plugin.zip"));
+        assert!(looks_like_warez_drop("FL_cracked.exe"));
         assert!(!looks_like_warez_drop("crackle.wav"));
+        assert!(!looks_like_warez_drop("crackle-pack.zip"));
+        assert!(!looks_like_warez_drop("crackling-presets.zip"));
         assert!(!looks_like_warez_drop("FLStudio_installer.exe"));
     }
 
@@ -401,5 +493,19 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert!(hits[0].path.as_ref().unwrap().ends_with("update.desktop"));
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn windows_run_key_flags_encoded_powershell() {
+        let dump = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
+    Steam    REG_SZ    C:\Program Files\Steam\steam.exe
+    Updater    REG_SZ    powershell -enc aGVsbG8=
+"#;
+        let values = parse_reg_query(dump);
+        assert_eq!(values.len(), 2);
+        let hits = hunt_run_values(&values, false);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].detail.contains("Run key"));
     }
 }

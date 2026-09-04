@@ -713,7 +713,7 @@ pub fn run_scan(
         available: hold_root.is_some(),
         summary: if held == 0 {
             if hold_root.is_some() {
-                "Install gate armed: crack/keygen/RAT drops are held on write.".into()
+                "Install gate armed: crack/keygen/RAT drops are held on write. Nested archives are inspected.".into()
             } else {
                 "Install gate standby.".into()
             }
@@ -1113,5 +1113,40 @@ mod tests {
             "install gate must not Amoeba-rewrite the bait: {:?}",
             report.auto_actions
         );
+    }
+
+    #[test]
+    fn install_gate_holds_zip_with_inner_keygen() {
+        let root = temp_lab("gate-zip");
+        let folder = root.join("Downloads");
+        let vault = root.join("install_gate");
+        fs::create_dir_all(&folder).unwrap();
+        let bait = folder.join("Ableton_Live_12.zip");
+        fs::write(
+            &bait,
+            crate::archive::store_zip(&[
+                ("Ableton Live 12/Setup.exe", b"MZ-setup"),
+                ("Ableton Live 12/keygen.exe", b"MZ-loader"),
+            ]),
+        )
+        .unwrap();
+        let immunity = root.join("immunity_db.json");
+        let report = run_scan(
+            Some(folder.to_string_lossy().into_owned()),
+            false,
+            true,
+            &root,
+            &immunity,
+            &root.join("engines"),
+            Some(&vault),
+        )
+        .expect("nested zip scan");
+        assert!(
+            report.intercepts.iter().any(|item| item.kind == "held"),
+            "expected nested zip hold, got {:?}",
+            report.intercepts
+        );
+        assert!(!bait.exists(), "zip with inner keygen should have been moved");
+        assert!(report.synthesis.contains("Install gate held"));
     }
 }

@@ -143,6 +143,24 @@ function isRansomNoteName(name: string): boolean {
   ].some((clue) => n.includes(clue));
 }
 
+function hasWarezCrackToken(name: string): boolean {
+  const n = name.toLowerCase();
+  let from = 0;
+  while (from + 5 <= n.length) {
+    const rel = n.indexOf("crack", from);
+    if (rel < 0) {
+      return false;
+    }
+    const after = n.slice(rel + 5);
+    if (after.startsWith("le") || after.startsWith("ling") || after.startsWith("ly")) {
+      from = rel + 5;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
 function isWarezName(name: string): boolean {
   const n = name.toLowerCase();
   if (
@@ -151,9 +169,107 @@ function isWarezName(name: string): boolean {
   ) {
     return false;
   }
-  return ["crack", "keygen", "activator", "nulled", "warez", "patcher"].some(
-    (clue) => n.includes(clue),
+  return (
+    hasWarezCrackToken(n) ||
+    ["keygen", "activator", "nulled", "warez", "patcher", "serialz", "codecpack", "codec-pack"].some(
+      (clue) => n.includes(clue),
+    )
   );
+}
+
+function demoInnerNames(path: string): string[] {
+  const name = (path.split(/[/\\]/).pop() ?? "").toLowerCase();
+  if (name === "ableton_live_12.zip" || name === "fl_studio_20.zip") {
+    return ["Setup.exe", "keygen.exe"];
+  }
+  return [];
+}
+
+function archiveReason(inner: string[]): string | null {
+  for (const item of inner) {
+    const base = item.split(/[/\\]/).pop() ?? item;
+    if (isWarezName(base) || isDoubleExecName(base) || isMasqueradeName(base)) {
+      return "Archive contains a crack/keygen/activator — common trojan, RAT, or ransomware loader.";
+    }
+  }
+  return null;
+}
+
+function holdReasonFromPath(path: string, innerNames?: string[]): string | null {
+  const name = path.split(/[/\\]/).pop() ?? "";
+  if (isDoubleExecName(name)) {
+    return "Double-extension drop: a creation or document name hiding an executable.";
+  }
+  if (isWarezName(name)) {
+    return "Crack/keygen/activator drop — common trojan, RAT, or ransomware loader.";
+  }
+  if (isMasqueradeName(path)) {
+    return "System binary name dropped outside System32 — classic RAT / loader masquerade.";
+  }
+  if (isRansomNoteName(name)) {
+    return "Ransom-note filename in a drop folder.";
+  }
+  const nested = innerNames && innerNames.length > 0 ? innerNames : demoInnerNames(path);
+  return archiveReason(nested);
+}
+
+function footholdFromTarget(customTarget: string | null): ScanReport["findings"] {
+  if (!customTarget || isSanctuaryPath(customTarget)) {
+    return [];
+  }
+  const reason = holdReasonFromPath(customTarget);
+  if (!reason) {
+    return [];
+  }
+  return [
+    {
+      engine: "foothold",
+      detail: reason,
+      path: redact(customTarget),
+      severity: reason.includes("Ransom-note") ? "high" : "critical",
+    },
+  ];
+}
+
+function isHoldableDetail(detail: string): boolean {
+  return (
+    detail.includes("Crack/keygen") ||
+    detail.includes("Double-extension") ||
+    detail.includes("System binary") ||
+    detail.includes("Ransom-note") ||
+    detail.includes("disguised") ||
+    detail.includes("Archive contains")
+  );
+}
+
+function recordIntercept(path: string, reason: string, sanctuary: boolean): Intercept {
+  const name = path.split(/[/\\]/).pop() ?? "drop.bin";
+  const intercept: Intercept = sanctuary
+    ? {
+        originalPath: redact(path),
+        holdPath: null,
+        reason,
+        kind: "sanctuary_alert",
+      }
+    : {
+        originalPath: redact(path),
+        holdPath: `[INSTALL-GATE]/${name}`,
+        reason,
+        kind: "held",
+      };
+  memory.intercepts = [intercept, ...memory.intercepts].slice(0, 40);
+  return intercept;
+}
+
+function simulateDrop(path: string, innerNames?: string[]): Intercept | null {
+  if (!memory.flags.liveWatch) {
+    return null;
+  }
+  const reason = holdReasonFromPath(path, innerNames);
+  if (!reason) {
+    return null;
+  }
+  return recordIntercept(path, reason, isSanctuaryPath(path));
 }
 
 function isMasqueradeName(path: string): boolean {
@@ -172,58 +288,6 @@ function isMasqueradeName(path: string): boolean {
     !joined.includes("/windows/system32") &&
     !joined.includes("/windows/syswow64")
   );
-}
-
-function footholdFromTarget(customTarget: string | null): ScanReport["findings"] {
-  if (!customTarget || isSanctuaryPath(customTarget)) {
-    return [];
-  }
-  const name = customTarget.split(/[/\\]/).pop() ?? "";
-  if (isDoubleExecName(name)) {
-    return [
-      {
-        engine: "foothold",
-        detail:
-          "Double-extension drop: a creation or document name hiding an executable.",
-        path: redact(customTarget),
-        severity: "critical",
-      },
-    ];
-  }
-  if (isWarezName(name)) {
-    return [
-      {
-        engine: "foothold",
-        detail:
-          "Crack/keygen/activator drop — common trojan, RAT, or ransomware loader.",
-        path: redact(customTarget),
-        severity: "critical",
-      },
-    ];
-  }
-  if (isMasqueradeName(customTarget)) {
-    return [
-      {
-        engine: "foothold",
-        detail:
-          "System binary name dropped outside System32 — classic RAT / loader masquerade.",
-        path: redact(customTarget),
-        severity: "critical",
-      },
-    ];
-  }
-  if (isRansomNoteName(name)) {
-    return [
-      {
-        engine: "foothold",
-        detail:
-          "Ransom-note filename in the sweep. Samurai will not rewrite sanctuary.",
-        path: redact(customTarget),
-        severity: "high",
-      },
-    ];
-  }
-  return [];
 }
 
 function buildScan(targetPath?: string | null): ScanReport {
@@ -301,14 +365,7 @@ function buildScan(targetPath?: string | null): ScanReport {
   const intercepts: Intercept[] = [];
   if (memory.flags.liveWatch && aborted === 0) {
     for (const finding of findings) {
-      const holdable =
-        finding.engine === "foothold" &&
-        (finding.detail.includes("Crack/keygen") ||
-          finding.detail.includes("Double-extension") ||
-          finding.detail.includes("System binary") ||
-          finding.detail.includes("Ransom-note") ||
-          finding.detail.includes("disguised"));
-      if (!holdable || !finding.path) {
+      if (finding.engine !== "foothold" || !finding.path || !isHoldableDetail(finding.detail)) {
         continue;
       }
       const name = finding.path.split(/[/\\]/).pop() ?? "drop.bin";
@@ -359,7 +416,7 @@ function buildScan(targetPath?: string | null): ScanReport {
           intercepts.length > 0
             ? `${intercepts.length} drop(s) moved to the install-gate vault.`
             : memory.flags.liveWatch
-              ? "Install gate armed: crack/keygen/RAT drops are held on write."
+              ? "Install gate armed: crack/keygen/RAT drops are held on write. Nested archives are inspected."
               : "Install gate standby.",
       },
       {
@@ -406,6 +463,30 @@ export async function demoInvoke<T>(
       return memory.flags.liveWatch as T;
     case "get_intercepts":
       return memory.intercepts as T;
+    case "simulate_drop": {
+      const path = String(args?.path ?? "");
+      const innerNames = Array.isArray(args?.innerNames)
+        ? (args.innerNames as string[])
+        : undefined;
+      return simulateDrop(path, innerNames) as T;
+    }
+    case "release_intercept": {
+      const holdPath = String(args?.holdPath ?? "");
+      const originalPath = String(args?.originalPath ?? "");
+      if (isSanctuaryPath(originalPath)) {
+        throw new Error(SANCTUARY_ABORT);
+      }
+      const matchCount = memory.intercepts.filter(
+        (item) => item.holdPath === holdPath || item.originalPath === originalPath,
+      ).length;
+      if (matchCount === 0) {
+        throw new Error("held drop is no longer in the install-gate vault");
+      }
+      memory.intercepts = memory.intercepts.filter(
+        (item) => item.holdPath !== holdPath && item.originalPath !== originalPath,
+      );
+      return originalPath as T;
+    }
     case "seed_demo_lab":
       memory.taintedDirty = true;
       memory.antigens = [];

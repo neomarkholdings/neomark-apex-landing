@@ -101,6 +101,10 @@ async function main() {
       await page.getByRole("button", { name: /^RESTORE$/ }).isDisabled(),
       "RESTORE stays disabled until Amoeba is waiting",
     );
+    check(
+      await page.getByRole("button", { name: /^RELEASE$/ }).isDisabled(),
+      "RELEASE stays disabled until the install gate holds a drop",
+    );
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_idle.png`, fullPage: true });
 
     await page.getByRole("button", { name: /^BROWSE$/ }).click();
@@ -204,6 +208,58 @@ async function main() {
     check(
       await page.getByRole("button", { name: /^RESTORE$/ }).isDisabled(),
       "Amoeba does not restore a held crack drop",
+    );
+    check(
+      await page.getByRole("button", { name: /^RELEASE$/ }).isEnabled(),
+      "RELEASE is armed after a held crack drop",
+    );
+
+    await boot(page);
+    await page.locator('input[placeholder*="built-in test folder"]').fill("/tmp/Downloads/Ableton_Live_12.zip");
+    await runScan(page);
+    const nested = await page.locator("body").innerText();
+    check(
+      nested.includes("Archive contains a crack/keygen") || nested.toLowerCase().includes("nested"),
+      "install gate peeks inside a DAW-named zip for a nested keygen",
+    );
+    check(nested.includes("HELD") || nested.includes("INSTALL GATE"), "nested keygen zip is held");
+    check(
+      await page.getByRole("button", { name: /^RESTORE$/ }).isDisabled(),
+      "Amoeba does not restore a nested archive hold",
+    );
+
+    await boot(page);
+    await page.locator('input[placeholder*="built-in test folder"]').fill("/tmp/Downloads/crackle-pack.zip");
+    await runScan(page);
+    const pack = await page.locator("body").innerText();
+    check(pack.includes("No threats in the last scan"), "crackle sample pack is not treated as warez");
+    check(!pack.includes("GATE HOLD"), "crackle-pack.zip does not trip a live gate hold");
+
+    await boot(page);
+    await page.waitForFunction(() => Boolean(window.__SAMURAI_DEMO__), { timeout: 15000 });
+    await page.evaluate(async () => {
+      await window.__SAMURAI_DEMO__.simulateDrop("/tmp/Downloads/Ableton_Live_12.zip", [
+        "Ableton Live 12/Setup.exe",
+        "Ableton Live 12/keygen.exe",
+      ]);
+    });
+    await page.locator(".protect-pill").getByText("GATE HOLD").waitFor({ timeout: 15000 });
+    const liveDrop = await page.locator("body").innerText();
+    check(liveDrop.includes("GATE HOLD"), "live nested drop flips the chassis to GATE HOLD without a scan");
+    check(
+      liveDrop.includes("Archive contains") || liveDrop.toLowerCase().includes("keygen"),
+      "live nested drop names the inner keygen",
+    );
+    check(
+      await page.getByRole("button", { name: /^RELEASE$/ }).isEnabled(),
+      "RELEASE is armed after a live hold",
+    );
+    await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_gate_hold.png`, fullPage: true });
+    await page.getByRole("button", { name: /^RELEASE$/ }).click();
+    await page.locator(".protect-pill").getByText("PROTECTED", { exact: true }).waitFor({ timeout: 15000 });
+    check(
+      await page.getByRole("button", { name: /^RELEASE$/ }).isDisabled(),
+      "RELEASE disarms after the drop is returned",
     );
 
     await page.setViewportSize({ width: 390, height: 844 });

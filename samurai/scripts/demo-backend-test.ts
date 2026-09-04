@@ -1,6 +1,6 @@
 import { demoInvoke } from "../src/lib/demoBackend.ts";
 import { isSanctuaryPath, SANCTUARY_ABORT } from "../src/lib/sanctuary.ts";
-import type { AppFlags, ImmunityDb, RepairOutcome, ScanReport } from "../src/lib/types.ts";
+import type { AppFlags, ImmunityDb, Intercept, RepairOutcome, ScanReport } from "../src/lib/types.ts";
 
 let failed = 0;
 let passed = 0;
@@ -197,6 +197,54 @@ async function run(): Promise<void> {
     (unarmed.intercepts ?? []).length === 0,
     "standby install gate does not hold the drop",
   );
+
+  await demoInvoke("toggle_live_watch");
+  const nested = await demoInvoke<ScanReport>("run_samurai_scan", {
+    targetPath: "/tmp/Downloads/Ableton_Live_12.zip",
+  });
+  check(
+    nested.findings.some((item) => item.detail.includes("Archive contains a crack/keygen")),
+    "install gate peeks inside a DAW-named zip for a nested keygen",
+  );
+  check(
+    (nested.intercepts ?? []).some((item) => item.kind === "held"),
+    "nested keygen zip is held, not left in Downloads",
+  );
+
+  const pack = await demoInvoke<ScanReport>("run_samurai_scan", {
+    targetPath: "/tmp/Downloads/crackle-pack.zip",
+  });
+  check(
+    pack.findings.length === 0,
+    "crackle sample packs are not treated as warez",
+  );
+  check(
+    (pack.intercepts ?? []).length === 0,
+    "crackle-pack.zip is not moved to the install-gate vault",
+  );
+
+  await resetConsole();
+  const live = await demoInvoke<Intercept | null>("simulate_drop", {
+    path: "/tmp/Downloads/Ableton_Live_12.zip",
+    innerNames: ["Ableton Live 12/Setup.exe", "Ableton Live 12/keygen.exe"],
+  });
+  check(live?.kind === "held", "live drop of a nested keygen zip is held without a scan");
+  check(
+    live?.reason.includes("Archive contains"),
+    "live drop reason names the nested keygen",
+  );
+  const ignored = await demoInvoke<Intercept | null>("simulate_drop", {
+    path: "/tmp/Downloads/crackle-pack.zip",
+  });
+  check(ignored === null, "live drop of a crackle sample pack is not held");
+
+  const released = await demoInvoke<string>("release_intercept", {
+    holdPath: live?.holdPath,
+    originalPath: live?.originalPath,
+  });
+  check(released.includes("Ableton_Live_12.zip"), "RELEASE returns the drop to the original path");
+  const afterRelease = await demoInvoke<Intercept[]>("get_intercepts");
+  check(afterRelease.length === 0, "RELEASE clears the held intercept");
 
   console.log(`${passed} passed, ${failed} failed`);
   if (failed > 0) {

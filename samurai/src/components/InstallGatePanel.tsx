@@ -6,14 +6,17 @@ interface InstallGatePanelProps {
   liveWatch: boolean;
   intercepts: Intercept[];
   onToggle: () => void;
+  onRelease: () => void;
 }
 
 export function InstallGatePanel({
   liveWatch,
   intercepts,
   onToggle,
+  onRelease,
 }: InstallGatePanelProps) {
   const latest = intercepts[0];
+  const canRelease = latest?.kind === "held" && Boolean(latest.holdPath);
   return (
     <DeckPanel>
       <SectionHead
@@ -32,7 +35,7 @@ export function InstallGatePanel({
       ) : (
         <p className="mb-3 font-readout text-[12px] leading-relaxed text-silver/80">
           {liveWatch
-            ? "On-write watch is armed on Downloads and Desktop. Crack, keygen, and disguised drops are held before they can run."
+            ? "On-write watch is armed on Downloads and Desktop. Named cracks, nested keygens inside DAW zips, and disguised drops are held before they can run."
             : "Install gate is standing by. New drops will not be held automatically."}
         </p>
       )}
@@ -42,6 +45,14 @@ export function InstallGatePanel({
         offLabel="STANDBY"
         onLabel="ARMED"
       />
+      <button
+        type="button"
+        onClick={onRelease}
+        disabled={!canRelease}
+        className="hardware-btn mt-3 w-full rounded-[10px] px-4 py-2.5 font-display text-[11px] tracking-[0.16em]"
+      >
+        RELEASE
+      </button>
     </DeckPanel>
   );
 }
