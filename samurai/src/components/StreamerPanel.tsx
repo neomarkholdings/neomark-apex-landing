@@ -23,8 +23,8 @@ export function StreamerPanel({ streamerMode, onToggle }: StreamerPanelProps) {
       ) : null}
       <p className="mb-3 font-readout text-[12px] leading-relaxed text-silver/80">
         {streamerMode
-          ? "Folder names are hidden and network capture is paused while you stream."
-          : "Full paths are visible. Turn this on before going live."}
+          ? "Streamer shield is on. Folder names are hidden and network capture is paused while you stream."
+          : "Full paths are visible. Turn the streamer shield on before going live."}
       </p>
       <HardwareToggle
         checked={streamerMode}
