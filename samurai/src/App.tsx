@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AmoebaVisualizer } from "./components/AmoebaVisualizer";
 import { CreationsVault } from "./components/CreationsVault";
-import { ScanConsole } from "./components/ScanConsole";
 import { InstallGatePanel } from "./components/InstallGatePanel";
+import { KatanaRail } from "./components/KatanaRail";
 import { ResidentPanel } from "./components/ResidentPanel";
+import { ScanConsole } from "./components/ScanConsole";
 import { StreamerPanel } from "./components/StreamerPanel";
 import { ThreatGauge } from "./components/ThreatGauge";
 import { WindowsLinePanel } from "./components/WindowsLinePanel";
@@ -29,8 +30,9 @@ import {
   toggleLiveWatch,
   toggleStreamerMode,
 } from "./lib/api";
-import { bandFromScore } from "./lib/types";
 import { dueToRearm, formatRearmClock } from "./lib/protection";
+import type { BladeStation } from "./lib/stations";
+import { bandFromScore } from "./lib/types";
 import type {
   AppFlags,
   Intercept,
@@ -128,6 +130,10 @@ export default function App() {
   const [resident, setResident] = useState<ResidentStatus | null>(null);
   const [aligning, setAligning] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [station, setStation] = useState<BladeStation>("protection");
+  const [unsheathed, setUnsheathed] = useState(true);
+  const autoDrewGate = useRef(false);
+  const autoDrewAmoeba = useRef(false);
 
   const liveHeld = intercepts.some(
     (item) => item.kind === "held" || item.kind === "sanctuary_alert",
@@ -278,6 +284,21 @@ export default function App() {
     };
   }, [flags.liveWatch, flags.disarmedUntil]);
 
+  useEffect(() => {
+    const hasHold = intercepts.some((item) => item.kind === "held");
+    if (hasHold && !autoDrewGate.current) {
+      autoDrewGate.current = true;
+      setStation("gate");
+      setUnsheathed(true);
+      return;
+    }
+    if (pending?.kind === "awaiting_confirmation" && !autoDrewAmoeba.current) {
+      autoDrewAmoeba.current = true;
+      setStation("amoeba");
+      setUnsheathed(true);
+    }
+  }, [intercepts, pending]);
+
   const ingestReport = useCallback(
     async (next: ScanReport) => {
       setReport(next);
@@ -415,6 +436,95 @@ export default function App() {
     }
   }
 
+  const duty: Partial<Record<BladeStation, boolean>> = {
+    gate: intercepts.some((item) => item.kind === "held"),
+    amoeba: pending?.kind === "awaiting_confirmation",
+    privacy: flags.streamerMode,
+  };
+
+  function selectStation(next: BladeStation): void {
+    setStation(next);
+    setUnsheathed(true);
+  }
+
+  function drawnStationPanel(drawn: BladeStation): ReactNode {
+    switch (drawn) {
+      case "protection":
+        return (
+          <ThreatGauge
+            score={score}
+            band={band}
+            synthesis={synthesis}
+            scanning={scanning}
+            liveWatch={flags.liveWatch}
+            rearmClock={rearmClock}
+            onToggle={() => {
+              void handleLiveWatchToggle();
+            }}
+          />
+        );
+      case "amoeba":
+        return (
+          <AmoebaVisualizer
+            repairing={repairing}
+            autoRepair={flags.amoebaAutoRepair}
+            onToggle={() => {
+              void handleAmoebaToggle();
+            }}
+          />
+        );
+      case "gate":
+        return (
+          <InstallGatePanel
+            liveWatch={flags.liveWatch}
+            intercepts={intercepts}
+            rearmClock={rearmClock}
+            onToggle={() => {
+              void handleLiveWatchToggle();
+            }}
+            onRelease={() => {
+              void handleRelease();
+            }}
+          />
+        );
+      case "resident":
+        return (
+          <ResidentPanel
+            status={resident}
+            onToggleAutostart={() => {
+              void handleAutostartToggle();
+            }}
+            onSit={() => {
+              void handleSit();
+            }}
+          />
+        );
+      case "windows":
+        return (
+          <WindowsLinePanel
+            status={windowsLine}
+            aligning={aligning}
+            onAlign={() => {
+              void handleAlign();
+            }}
+          />
+        );
+      case "privacy":
+        return (
+          <StreamerPanel
+            streamerMode={flags.streamerMode}
+            onToggle={() => {
+              void handleStreamerToggle();
+            }}
+          />
+        );
+      default: {
+        const exhaustive: never = drawn;
+        return exhaustive;
+      }
+    }
+  }
+
   return (
     <div className="stage">
       <div className="chassis">
@@ -456,62 +566,29 @@ export default function App() {
           </header>
           <div className="blood-rule" aria-hidden="true" />
 
-          <div className="av-grid">
-            <div className="stack">
-              <ThreatGauge
-                score={score}
-                band={band}
-                synthesis={synthesis}
-                scanning={scanning}
-                liveWatch={flags.liveWatch}
-                rearmClock={rearmClock}
-                onToggle={() => {
-                  void handleLiveWatchToggle();
-                }}
-              />
-              <AmoebaVisualizer
-                repairing={repairing}
-                autoRepair={flags.amoebaAutoRepair}
-                onToggle={() => {
-                  void handleAmoebaToggle();
-                }}
-              />
-              <InstallGatePanel
-                liveWatch={flags.liveWatch}
-                intercepts={intercepts}
-                rearmClock={rearmClock}
-                onToggle={() => {
-                  void handleLiveWatchToggle();
-                }}
-                onRelease={() => {
-                  void handleRelease();
-                }}
-              />
-              <ResidentPanel
-                status={resident}
-                onToggleAutostart={() => {
-                  void handleAutostartToggle();
-                }}
-                onSit={() => {
-                  void handleSit();
-                }}
-              />
-              <WindowsLinePanel
-                status={windowsLine}
-                aligning={aligning}
-                onAlign={() => {
-                  void handleAlign();
-                }}
-              />
-              <StreamerPanel
-                streamerMode={flags.streamerMode}
-                onToggle={() => {
-                  void handleStreamerToggle();
-                }}
-              />
-            </div>
+          <div className={`av-grid dojo-grid${unsheathed ? "" : " is-sheathed"}`}>
+            <KatanaRail
+              station={station}
+              onSelect={selectStation}
+              unsheathed={unsheathed}
+              onToggleSheathe={() => {
+                setUnsheathed((open) => !open);
+              }}
+              duty={duty}
+            />
+            {unsheathed ? (
+              <div
+                className="drawn-blade"
+                id="drawn-blade"
+                role="tabpanel"
+                aria-labelledby={`station-${station}`}
+                key={station}
+              >
+                {drawnStationPanel(station)}
+              </div>
+            ) : null}
 
-            <div className="stack">
+            <div className="stack scan-column">
               <ScanConsole
                 path={path}
                 onPathChange={setPath}
