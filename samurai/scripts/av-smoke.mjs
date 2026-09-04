@@ -67,6 +67,17 @@ async function boot(page) {
   await page.getByText("NO SCAN YET").waitFor({ timeout: 15000 });
 }
 
+async function drawStation(page, name) {
+  await page.getByRole("tab", { name }).click();
+  await page.waitForFunction(
+    (label) => {
+      const selected = document.querySelector('[role="tab"][aria-selected="true"]');
+      return selected?.getAttribute("aria-label") === label;
+    },
+    name,
+  );
+}
+
 async function waitForScanIdle(page) {
   await page.getByRole("button", { name: /^SCAN$/ }).waitFor({ state: "visible", timeout: 20000 });
 }
@@ -102,13 +113,27 @@ async function main() {
       "RESTORE stays disabled until Amoeba is waiting",
     );
     check(
+      await page.getByRole("tab", { name: "WINDOWS LINE" }).isVisible(),
+      "idle chassis shows the Windows Defender line on the katana rail",
+    );
+    check(
+      await page.getByRole("tab", { name: "RESIDENT" }).isVisible(),
+      "idle chassis shows the resident station on the katana rail",
+    );
+    check(
+      !(await page.getByRole("button", { name: /^RELEASE$/ }).isVisible()),
+      "RELEASE stays sheathed until INSTALL GATE is drawn",
+    );
+    await drawStation(page, "INSTALL GATE");
+    check(
       await page.getByRole("button", { name: /^RELEASE$/ }).isDisabled(),
       "RELEASE stays disabled until the install gate holds a drop",
     );
-    check(idle.includes("WINDOWS LINE"), "idle chassis shows the Windows Defender line");
+    await drawStation(page, "WINDOWS LINE");
+    const windowsIdle = await page.locator("body").innerText();
     check(
-      idle.toLowerCase().includes("never downloads") ||
-        idle.toLowerCase().includes("never Downloads".toLowerCase()),
+      windowsIdle.toLowerCase().includes("never downloads") ||
+        windowsIdle.toLowerCase().includes("never Downloads".toLowerCase()),
       "Windows line copy refuses to exclude Downloads",
     );
     check(
@@ -123,10 +148,12 @@ async function main() {
       "ALIGN on the preview host does not disable Defender",
     );
     check(aligned.includes("RESIDENT"), "idle chassis shows the resident tray line");
+    await drawStation(page, "RESIDENT");
+    const residentIdle = await page.locator("body").innerText();
     check(
-      aligned.toLowerCase().includes("do not pop") ||
-        aligned.toLowerCase().includes("steal focus") ||
-        aligned.toLowerCase().includes("taskbar"),
+      residentIdle.toLowerCase().includes("do not pop") ||
+        residentIdle.toLowerCase().includes("steal focus") ||
+        residentIdle.toLowerCase().includes("taskbar"),
       "resident copy stays quiet: no pop, toast, or focus steal",
     );
     check(
@@ -146,6 +173,7 @@ async function main() {
     );
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_idle.png`, fullPage: true });
 
+    await drawStation(page, "PROTECTION");
     await page.getByRole("switch", { name: "Protection" }).click();
     await page.locator(".protect-pill").getByText("DISARMED").waitFor({ timeout: 15000 });
     const disarmedIdle = await page.locator(".protect-pill").innerText();
@@ -173,6 +201,7 @@ async function main() {
       "browser preview explains that BROWSE needs the desktop app",
     );
 
+    await drawStation(page, "AMOEBA");
     await page.locator('button[role="switch"]').filter({ hasText: "ASK" }).click();
     await runScan(page);
     const askText = await page.locator("body").innerText();
@@ -215,6 +244,7 @@ async function main() {
     );
 
     await boot(page);
+    await drawStation(page, "PRIVACY");
     await page.locator('button[role="switch"]').filter({ hasText: "HIDE PATHS" }).click();
     await runScan(page);
     const streamText = await page.locator("body").innerText();
@@ -238,6 +268,7 @@ async function main() {
       const body = await page.locator("body").innerText();
       check(body.includes(SANCTUARY_ABORT), `scan of ${marker.label} shows the exact sanctuary abort`);
     }
+    await drawStation(page, "PROTECTION");
     await page.getByRole("switch", { name: "Protection" }).click();
     await page.locator(".protect-pill").getByText("DISARMED").waitFor({ timeout: 15000 });
     await page.locator('input[placeholder*="built-in test folder"]').fill("/Music");
@@ -267,6 +298,11 @@ async function main() {
 
     await page.locator('input[placeholder*="built-in test folder"]').fill("/tmp/Downloads/FLStudio-crack.exe");
     await runScan(page);
+    await page.getByRole("button", { name: /^RELEASE$/ }).waitFor({ state: "visible", timeout: 15000 });
+    check(
+      (await page.getByRole("tab", { name: "INSTALL GATE" }).getAttribute("aria-selected")) === "true",
+      "a held crack drop unsheathes INSTALL GATE",
+    );
     const warez = await page.locator("body").innerText();
     check(
       warez.includes("Crack/keygen") || warez.toLowerCase().includes("crack/keygen"),
@@ -313,6 +349,11 @@ async function main() {
       ]);
     });
     await page.locator(".protect-pill").getByText("GATE HOLD").waitFor({ timeout: 15000 });
+    await page.getByRole("button", { name: /^RELEASE$/ }).waitFor({ state: "visible", timeout: 15000 });
+    check(
+      (await page.getByRole("tab", { name: "INSTALL GATE" }).getAttribute("aria-selected")) === "true",
+      "a live hold unsheathes INSTALL GATE",
+    );
     const liveDrop = await page.locator("body").innerText();
     check(liveDrop.includes("GATE HOLD"), "live nested drop flips the chassis to GATE HOLD without a scan");
     check(
