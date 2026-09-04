@@ -4,35 +4,129 @@ Local endpoint detection & response for creators. Ronin Softworx / Neomark Holdi
 
 **Samurai** hunts malware. **Amoeba** restores damaged hosts from *your* shadow copies. Creative sanctuary paths (`neomark`, `retroblazed`, `/Music`, `/Studio-Projects`) are immutable — no delete, quarantine, or rewrite.
 
+This is a **desktop app**. People who download the installer do **not** need Node, Rust, YARA, or ClamAV. Those are packaged into the build.
+
 Silver / blood-red Y2K metal console. Neon green is not used.
 
-## Phase 1 — scaffolding
+## Download (what users run)
+
+After a signed release is published, each OS gets one file:
+
+| OS | What they run | What is already inside |
+| --- | --- | --- |
+| Windows | NSIS setup `.exe` | Samurai + WebView2 bootstrapper + YARA + ClamAV |
+| macOS | `.dmg` | Samurai + YARA + ClamAV (Gatekeeper-quiet only after notarization) |
+| Linux | `.deb` | Samurai; apt also installs WebKit, YARA, ClamAV, and tshark |
+
+Heuristic scanning is always on. **tshark** ships with the Linux `.deb`. It is not silently bundled on Windows/macOS because Npcap/Wireshark needs a driver EULA and admin rights. Creators who stream should leave **HIDE PATHS** on anyway.
+
+ClamAV signatures may still download on first scan (`freshclam`) so the installer stays smaller than a full CVD snapshot.
+
+Amoeba writes restore points as `{folder}/.amoeba_shadow/{filename}` for clean files under 8 MB. It never writes those copies inside protected folders.
+
+## Code signing (removes SmartScreen / Gatekeeper warnings)
+
+Unsigned downloads work, but Windows SmartScreen and macOS Gatekeeper will warn. Signing is a **certificate purchase + GitHub secrets**. The build cannot invent a trusted identity.
+
+### Windows (Authenticode)
+
+1. Buy a **code signing** certificate (not an SSL cert).
+   - **OV** (organization validated): cheaper; SmartScreen still warns until reputation builds.
+   - **EV** (extended validation): more expensive; SmartScreen reputation starts immediately.
+   - **Azure Trusted Signing** (Artifact Signing): Microsoft-hosted; often the fastest path for a company.
+2. Export a `.pfx` and password.
+3. Add GitHub Actions secrets:
+   - `WINDOWS_CERTIFICATE` — base64 of the `.pfx` (`openssl base64 -A -in cert.pfx`)
+   - `WINDOWS_CERTIFICATE_PASSWORD`
+4. The release workflow imports the cert and signs with `signtool`. Timestamping uses DigiCert.
+
+Until those secrets exist, Windows installers still build — they just stay unsigned.
+
+### macOS (Developer ID + notarization)
+
+1. Enroll in the [Apple Developer Program](https://developer.apple.com/programs/) ($99/year).
+2. Create a **Developer ID Application** certificate (not “Apple Development”, and not App Store Distribution unless you ship on the App Store).
+3. Export the cert + private key as a `.p12`.
+4. Create an [App Store Connect API key](https://appstoreconnect.apple.com/access/integrations) for notarization.
+5. Add GitHub secrets:
+
+| Secret | What it is |
+| --- | --- |
+| `APPLE_CERTIFICATE` | base64 of the `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | export password |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Ronin Softworx (TEAMID)` |
+| `KEYCHAIN_PASSWORD` | any throwaway password for the CI keychain |
+| `APPLE_API_ISSUER` | Issuer ID from App Store Connect |
+| `APPLE_API_KEY` | Key ID |
+| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | fallback Apple ID notarization |
+
+Notarization is required. Signing without notarizing still shows “Apple cannot check it for malicious software.”
+
+### Linux
+
+`.deb` packages can be GPG-signed later (`dpkg-sig`). Users installing from your apt repo trust that key. A random downloaded `.deb` does not use SmartScreen or Gatekeeper.
+
+## Ship a release
+
+1. Repo **Settings → Actions → General → Workflow permissions → Read and write**.
+2. Add the signing secrets above when the certs are in hand.
+3. Tag and push:
 
 ```bash
-# 1. Tauri v2 + Vite + React 19 + TypeScript
-npm create tauri-app@latest samurai -- --template react-ts --manager npm --yes --identifier com.roninsoftworx.samurai --tauri-version 2
+git tag samurai-v0.1.0
+git push origin samurai-v0.1.0
+```
 
+Or **Actions → Samurai release → Run workflow**.
+
+GitHub builds Windows / macOS / Linux, stages YARA + ClamAV into the app, and opens a **draft** Release. Publish that draft — that URL is what you send to testers.
+
+Local installer (developers):
+
+```bash
 cd samurai
-
-# 2. Tailwind CSS v4 via the Vite plugin
-npm install
-npm install -D tailwindcss @tailwindcss/vite
-
-# 3. Icons + readout fonts
-npm install lucide-react @fontsource/orbitron @fontsource/share-tech-mono @fontsource/noto-sans-jp
+npm run desktop:build
 ```
 
-Enable Tailwind in `vite.config.ts` with `import tailwindcss from "@tailwindcss/vite"` and `plugins: [react(), tailwindcss()]`. Import Tailwind in `src/index.css` with `@import "tailwindcss";`.
+Outputs land in `src-tauri/target/release/bundle/`. `npm run engines:stage` copies YARA/ClamAV from PATH (or downloads the Windows zips) into `src-tauri/engines/` first.
 
-## Run
+## Develop on this repo
+
+You need [Node 20+](https://nodejs.org/) and [Rust](https://rustup.rs/) (stable) **only if you are building from source**.
 
 ```bash
-npm run dev          # UI console (browser / Vite)
-npm run tauri dev    # desktop webview (needs WebKitGTK on Linux)
-npm test -s --prefix . 2>/dev/null || cargo test --manifest-path src-tauri/Cargo.toml
+git clone https://github.com/neomarkholdings/neomark-apex-landing.git
+cd neomark-apex-landing/samurai
+npm install
+npm run desktop
 ```
 
-The Vite UI talks to the Rust backend inside Tauri. In a plain browser it uses a sealed demo lab so the console still scans, toggles, and restores.
+Click **BROWSE**, pick a folder, then **SCAN**. Leave the folder blank for the built-in self-test lab.
+
+**Windows (from source):** [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) and [MSVC Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+
+**macOS (from source):** `xcode-select --install`
+
+**Linux (from source):**
+
+```bash
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf yara clamav tshark
+```
+
+## Browser preview (UI only)
+
+```bash
+npm run dev
+```
+
+Open http://localhost:1420. Scans use the demo lab. BROWSE, YARA, ClamAV, and tshark are not live here.
+
+## Tests
+
+```bash
+npm test
+```
 
 ## Product rules
 

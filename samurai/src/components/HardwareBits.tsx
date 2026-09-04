@@ -21,3 +21,18 @@ export function Led({ on, silver = false, className = "" }: LedProps) {
     />
   );
 }
+
+interface VentProps {
+  slots?: number;
+  className?: string;
+}
+
+export function Vent({ slots = 8, className = "" }: VentProps) {
+  return (
+    <span className={`vent ${className}`} aria-hidden="true">
+      {Array.from({ length: slots }, (_, index) => (
+        <span key={index} className="vent-slot" />
+      ))}
+    </span>
+  );
+}

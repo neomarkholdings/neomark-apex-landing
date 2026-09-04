@@ -25,6 +25,7 @@ export type RepairOutcome =
       kind: "awaiting_confirmation";
       path: string;
       message: string;
+      restorePath: string;
     }
   | {
       kind: "sanctuary_abort";
@@ -79,11 +80,11 @@ export function bandFromScore(score: number): ThreatBand {
 export function bandLabel(band: ThreatBand): string {
   switch (band) {
     case "nominal":
-      return "NOMINAL // 正常";
+      return "PROTECTED";
     case "caution":
-      return "CAUTION // 注意";
+      return "AT RISK";
     case "critical":
-      return "CRITICAL // 危機";
+      return "INFECTED";
     default: {
       const exhaustive: never = band;
       return exhaustive;

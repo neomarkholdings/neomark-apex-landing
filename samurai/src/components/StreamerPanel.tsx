@@ -1,5 +1,5 @@
 import { HardwareToggle } from "./HardwareToggle";
-import { Led } from "./HardwareBits";
+import { DeckPanel, SectionHead } from "./Deck";
 
 interface StreamerPanelProps {
   streamerMode: boolean;
@@ -8,36 +8,30 @@ interface StreamerPanelProps {
 
 export function StreamerPanel({ streamerMode, onToggle }: StreamerPanelProps) {
   return (
-    <section className="panel-metal panel-pod-alt relative flex h-full flex-col p-4">
-      <header className="mb-3 flex items-center justify-between">
-        <div>
-          <p className="font-display text-[11px] tracking-[0.22em] text-silver">
-            STREAMER // ストリーマー
-          </p>
-          <p className="mt-1 font-readout text-[10px] tracking-[0.16em] text-silver/70">
-            OVERLAY GUARD
+    <DeckPanel>
+      <SectionHead
+        en="PRIVACY"
+        jp="遮蔽"
+        meta={streamerMode ? "ON AIR" : "OFF"}
+      />
+      {streamerMode ? (
+        <div className="lcd-face critical mb-3 rounded-[10px] px-3 py-2">
+          <p className="relative font-display text-[10px] tracking-[0.22em]">
+            ON AIR · PATHS REDACTED
           </p>
         </div>
-        <Led on={streamerMode} />
-      </header>
-      <div className="crt-well mb-4 flex flex-1 flex-col justify-center rounded-[28px] px-4 py-5">
-        <p className="font-display text-[10px] tracking-[0.22em] text-silver/80">
-          {streamerMode ? "ACTIVE STREAMER SHIELD" : "STANDARD MONITORING"}
-        </p>
-        <p className="mt-3 font-readout text-[12px] leading-relaxed text-chrome/90">
-          {streamerMode
-            ? "Path names stay off the overlay. Packet sampling is muted so a live scene never leaks your folders."
-            : "Full path synthesis is live. Flip the shield before you go live."}
-        </p>
-      </div>
+      ) : null}
+      <p className="mb-3 font-readout text-[12px] leading-relaxed text-silver/80">
+        {streamerMode
+          ? "Folder names are hidden and network capture is paused while you stream."
+          : "Full paths are visible. Turn this on before going live."}
+      </p>
       <HardwareToggle
         checked={streamerMode}
         onToggle={onToggle}
-        offLabel="MONITOR"
-        offKana="監視"
-        onLabel="SHIELD"
-        onKana="シールド"
+        offLabel="SHOW PATHS"
+        onLabel="HIDE PATHS"
       />
-    </section>
+    </DeckPanel>
   );
 }

@@ -1,104 +1,217 @@
 import { repairKindLabel } from "../lib/types";
-import type { EngineStatus, Finding, RepairOutcome } from "../lib/types";
+import type { EngineStatus, Finding, RepairOutcome, Severity } from "../lib/types";
+import { DeckPanel, SectionHead } from "./Deck";
+import { Led } from "./HardwareBits";
 
 interface ScanConsoleProps {
   path: string;
   onPathChange: (value: string) => void;
+  onBrowse: () => void;
+  onScan: () => void;
+  onRestore: () => void;
+  scanning: boolean;
   pending: RepairOutcome | null;
   findings: Finding[];
+  actions: RepairOutcome[];
   engines: EngineStatus[];
-  labPath?: string | null;
+  scannedFiles: number;
+  hasScanned: boolean;
+}
+
+function actionForFinding(
+  finding: Finding,
+  actions: RepairOutcome[],
+): RepairOutcome | null {
+  const name = finding.path?.split(/[/\\]/).pop();
+  if (!finding.path) {
+    return null;
+  }
+  return (
+    actions.find((item) => {
+      if (item.path === finding.path) {
+        return true;
+      }
+      return Boolean(name && item.path.endsWith(name));
+    }) ?? null
+  );
 }
 
 function engineTone(status: EngineStatus): string {
-  if (!status.available) {
-    return "text-silver/40";
+  return status.available ? "text-chrome" : "text-silver/40";
+}
+
+function severityClass(severity: Severity): string {
+  switch (severity) {
+    case "low":
+      return "sev-low";
+    case "medium":
+      return "sev-medium";
+    case "high":
+      return "sev-high";
+    case "critical":
+      return "sev-critical";
+    default: {
+      const exhaustive: never = severity;
+      return exhaustive;
+    }
   }
-  if (status.summary.toLowerCase().includes("0 ")) {
-    return "text-chrome";
-  }
-  return "text-blood-hot";
 }
 
 export function ScanConsole({
   path,
   onPathChange,
+  onBrowse,
+  onScan,
+  onRestore,
+  scanning,
   pending,
   findings,
+  actions,
   engines,
-  labPath,
+  scannedFiles,
+  hasScanned,
 }: ScanConsoleProps) {
+  const canRestore = pending?.kind === "awaiting_confirmation";
+
   return (
-    <section className="panel-metal panel-pod p-5">
-      <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="font-display text-[11px] tracking-[0.32em] text-silver">
-            SCAN // スキャン
-          </p>
-          <p className="mt-1 max-w-xl font-readout text-[10px] leading-relaxed text-silver/65">
-            Samurai inspects the host. It does not rewrite your art. Leave the
-            path blank to arm the local self-test lab
-            {labPath ? ` (${labPath})` : ""}.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {engines.map((engine) => (
-            <span
-              key={engine.name}
-              className={`rounded-full border border-white/10 px-3 py-1 font-readout text-[10px] tracking-[0.16em] ${engineTone(engine)}`}
-              title={engine.summary}
-            >
-              {engine.name.toUpperCase()}
-            </span>
-          ))}
-        </div>
-      </header>
+    <DeckPanel className="h-full">
+      <SectionHead
+        en="SCAN"
+        jp="検査"
+        meta={scanning ? "RUNNING" : `${scannedFiles} FILES`}
+      />
 
-      <label className="block">
-        <span className="mb-1 block font-display text-[9px] tracking-[0.28em] text-silver/70">
-          TARGET PATH
-        </span>
-        <input
-          value={path}
-          onChange={(event) => onPathChange(event.target.value)}
-          placeholder="scan a folder, or leave blank for the sealed lab"
-          className="lcd-face w-full rounded-lg px-3 py-3 font-readout text-sm outline-none ring-0"
-        />
-      </label>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {engines.map((engine) => (
+          <span
+            key={engine.name}
+            title={engine.summary}
+            className={`engine-chip font-readout text-[10px] tracking-[0.12em] ${engineTone(engine)} ${
+              engine.available ? "live" : ""
+            }`}
+          >
+            <Led on={engine.available} silver={!engine.available} />
+            {engine.name.toUpperCase()}
+            {engine.available ? " ON" : " OFF"}
+          </span>
+        ))}
+      </div>
 
-      {pending ? (
-        <div className="lcd-face critical mt-4 rounded-xl px-4 py-3">
-          <p className="font-display text-[9px] tracking-[0.28em]">
-            {repairKindLabel(pending.kind)} // {pending.path}
-          </p>
-          <p className="mt-1 font-readout text-sm">{pending.message}</p>
+      <div className="flex flex-col gap-3 lg:flex-row">
+        <label className="min-w-0 flex-1">
+          <span className="mb-1 block font-display text-[9px] tracking-[0.2em] text-silver/70">
+            FOLDER TO SCAN
+          </span>
+          <input
+            value={path}
+            onChange={(event) => onPathChange(event.target.value)}
+            placeholder="Leave blank to scan the built-in test folder"
+            className="lcd-face w-full rounded-[10px] px-3 py-2.5 font-readout text-sm outline-none"
+          />
+        </label>
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={onBrowse}
+            disabled={scanning}
+            className="hardware-btn min-w-[108px] rounded-[10px] px-4 py-2.5 font-display text-[11px] tracking-[0.16em]"
+          >
+            BROWSE
+          </button>
+          <button
+            type="button"
+            onClick={onScan}
+            disabled={scanning}
+            className={`hardware-btn min-w-[108px] rounded-[10px] px-4 py-2.5 font-display text-[11px] tracking-[0.16em] ${
+              scanning ? "pressed armed" : "armed"
+            }`}
+          >
+            {scanning ? "SCANNING" : "SCAN"}
+          </button>
+          <button
+            type="button"
+            onClick={onRestore}
+            disabled={!canRestore}
+            className="hardware-btn min-w-[108px] rounded-[10px] px-4 py-2.5 font-display text-[11px] tracking-[0.16em]"
+          >
+            RESTORE
+          </button>
+        </div>
+      </div>
+
+      {scanning ? (
+        <div className="well mt-3 h-2 overflow-hidden">
+          <div className="progress-fill indeterminate" />
         </div>
       ) : null}
 
-      <ul className="mt-4 grid gap-2 md:grid-cols-2">
+      {pending ? (
+        <div
+          className={`lcd-face mt-3 rounded-[10px] px-3 py-2.5 ${
+            pending.kind === "sanctuary_abort" || pending.kind === "failed"
+              ? "critical"
+              : ""
+          }`}
+        >
+          <p className="relative font-display text-[9px] tracking-[0.18em]">
+            {repairKindLabel(pending.kind)} · {pending.path}
+          </p>
+          <p className="relative mt-1 font-readout text-[13px]">{pending.message}</p>
+        </div>
+      ) : null}
+
+      <div className="well mt-3 flex-1">
+        <div className="threat-row head font-display text-[9px] tracking-[0.16em] text-silver/50">
+          <span>FILE</span>
+          <span>ENGINE</span>
+          <span>SEVERITY</span>
+          <span>ACTION</span>
+        </div>
         {findings.length === 0 ? (
-          <li className="panel-inset rounded-xl px-4 py-3 font-readout text-xs text-silver/60">
-            No antigens on the current readout. Your creations stay untouched.
-          </li>
+          <div className="empty-sweep">
+            <span className="empty-mark">侍</span>
+            <p className="font-readout text-sm text-silver/70">
+              {hasScanned
+                ? "No threats in the last scan. Your files were not modified."
+                : "Ready to inspect a folder. Samurai will not rewrite your creations."}
+            </p>
+            <p className="font-display text-[9px] tracking-[0.28em] text-silver/35">
+              {hasScanned ? "CLEAN SWEEP" : "STANDBY"}
+            </p>
+          </div>
         ) : (
-          findings.map((finding, index) => (
-            <li
-              key={`${finding.engine}-${finding.path ?? "n"}-${index}`}
-              className="panel-inset rounded-xl px-4 py-3"
-            >
-              <p className="font-display text-[9px] tracking-[0.24em] text-blood-hot">
-                {finding.engine.toUpperCase()} · {finding.severity.toUpperCase()}
-              </p>
-              <p className="mt-1 font-readout text-xs text-chrome">{finding.detail}</p>
-              {finding.path ? (
-                <p className="mt-1 truncate font-readout text-[11px] text-silver/60">
-                  {finding.path}
+          findings.map((finding, index) => {
+            const action = actionForFinding(finding, actions);
+            return (
+              <div
+                key={`${finding.engine}-${finding.path ?? "n"}-${index}`}
+                className="threat-row"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-readout text-[13px] text-chrome">
+                    {finding.path ?? "Network sample"}
+                  </p>
+                  <p className="truncate font-readout text-[11px] text-silver/55">
+                    {finding.detail}
+                  </p>
+                </div>
+                <p className="font-readout text-[11px] uppercase text-silver/80">
+                  {finding.engine}
                 </p>
-              ) : null}
-            </li>
-          ))
+                <p
+                  className={`font-readout text-[11px] uppercase ${severityClass(finding.severity)}`}
+                >
+                  <span className="sev-pip" />
+                  {finding.severity}
+                </p>
+                <p className="font-readout text-[11px] uppercase text-silver/80">
+                  {action ? repairKindLabel(action.kind) : "DETECTED"}
+                </p>
+              </div>
+            );
+          })
         )}
-      </ul>
-    </section>
+      </div>
+    </DeckPanel>
   );
 }
