@@ -730,6 +730,13 @@ button[role="switch"]:focus-visible {
   border-color: rgba(240, 196, 203, 0.4);
 }
 
+.protect-pill.disarmed {
+  border-color: rgba(240, 196, 203, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 0 16px rgba(240, 196, 203, 0.18);
+}
+
 .protect-pill.critical {
   border-color: rgba(255, 26, 75, 0.55);
   box-shadow:

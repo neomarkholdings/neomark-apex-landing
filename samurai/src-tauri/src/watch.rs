@@ -19,7 +19,7 @@ pub fn spawn(app: AppHandle) {
 
 fn live_watch_on(app: &AppHandle) -> bool {
     app.try_state::<crate::AppState>()
-        .map(|state| *state.live_watch.lock().unwrap_or_else(|e| e.into_inner()))
+        .map(|state| state.live_watch_armed())
         .unwrap_or(true)
 }
 

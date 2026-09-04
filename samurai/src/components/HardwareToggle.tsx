@@ -6,6 +6,7 @@ interface HardwareToggleProps {
   disabled?: boolean;
   offLabel: string;
   onLabel: string;
+  ariaLabel?: string;
 }
 
 export function HardwareToggle({
@@ -14,12 +15,14 @@ export function HardwareToggle({
   disabled = false,
   offLabel,
   onLabel,
+  ariaLabel,
 }: HardwareToggleProps) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={onToggle}
       className="w-full"

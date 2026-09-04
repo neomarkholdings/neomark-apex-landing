@@ -71,6 +71,7 @@ export interface AppFlags {
   amoebaAutoRepair: boolean;
   streamerMode: boolean;
   liveWatch: boolean;
+  disarmedUntil?: number | null;
 }
 
 export interface Antigen {

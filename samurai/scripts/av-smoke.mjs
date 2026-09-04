@@ -124,6 +124,27 @@ async function main() {
     );
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_idle.png`, fullPage: true });
 
+    await page.getByRole("switch", { name: "Protection" }).click();
+    await page.locator(".protect-pill").getByText("DISARMED").waitFor({ timeout: 15000 });
+    const disarmedIdle = await page.locator(".protect-pill").innerText();
+    check(disarmedIdle.includes("DISARMED"), "Protection switch flips the chassis pill to DISARMED");
+    check(!disarmedIdle.includes("PROTECTED"), "disarm does not keep saying PROTECTED");
+    const disarmedBody = await page.locator("body").innerText();
+    check(
+      disarmedBody.toLowerCase().includes("sanctuary stays locked") ||
+        disarmedBody.toLowerCase().includes("holds are paused"),
+      "disarm copy says holds pause and sanctuary stays locked",
+    );
+    check(/RE-ARM \d+:\d{2}/.test(disarmedBody), "disarm shows a re-arm countdown");
+    await page.getByRole("switch", { name: "Protection" }).click();
+    await page.locator(".protect-pill").getByText("PROTECTED", { exact: true }).waitFor({
+      timeout: 15000,
+    });
+    check(
+      (await page.locator(".protect-pill").innerText()).includes("PROTECTED"),
+      "switching Protection ON restores PROTECTED",
+    );
+
     await page.getByRole("button", { name: /^BROWSE$/ }).click();
     check(
       (await page.locator("body").innerText()).includes("Folder picker is in the desktop app"),
@@ -195,6 +216,15 @@ async function main() {
       const body = await page.locator("body").innerText();
       check(body.includes(SANCTUARY_ABORT), `scan of ${marker.label} shows the exact sanctuary abort`);
     }
+    await page.getByRole("switch", { name: "Protection" }).click();
+    await page.locator(".protect-pill").getByText("DISARMED").waitFor({ timeout: 15000 });
+    await page.locator('input[placeholder*="built-in test folder"]').fill("/Music");
+    await runScan(page);
+    check(
+      (await page.locator("body").innerText()).includes(SANCTUARY_ABORT),
+      "sanctuary abort still fires while protection is disarmed",
+    );
+    await page.getByRole("switch", { name: "Protection" }).click();
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_sanctuary.png`, fullPage: true });
 
     await page.locator('input[placeholder*="built-in test folder"]').fill("/tmp/downloads/invoice.pdf");
