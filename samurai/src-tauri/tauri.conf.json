@@ -41,7 +41,8 @@
         "type": "embedBootstrapper"
       },
       "nsis": {
-        "installMode": "both"
+        "installMode": "both",
+        "installerHooks": "./windows/installer-hooks.nsh"
       }
     },
     "linux": {

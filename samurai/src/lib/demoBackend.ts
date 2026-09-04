@@ -7,6 +7,7 @@ import type {
   Intercept,
   RepairOutcome,
   ScanReport,
+  WindowsLineStatus,
 } from "./types";
 
 const SELFTEST = "SAMURAI-AMOEBA-ANTIGEN-SELFTEST";
@@ -445,6 +446,18 @@ function buildScan(targetPath?: string | null): ScanReport {
   };
 }
 
+function previewWindowsLine(): WindowsLineStatus {
+  return {
+    host: "preview",
+    defenderRealtime: null,
+    exclusionsAligned: false,
+    paths: [],
+    processes: ["samurai.exe", "yara.exe", "clamscan.exe", "freshclam.exe"],
+    summary:
+      "Windows Defender line is idle on this host. On Windows, ALIGN asks Defender to skip only Samurai folders — never Downloads, never Desktop. Real-time protection stays on.",
+  };
+}
+
 export async function demoInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
@@ -492,6 +505,10 @@ export async function demoInvoke<T>(
       memory.antigens = [];
       memory.intercepts = [];
       return memory.labPath as T;
+    case "get_windows_line":
+      return previewWindowsLine() as T;
+    case "align_windows_line":
+      return previewWindowsLine().summary as T;
     case "get_immunity_log":
       return {
         version: 1,

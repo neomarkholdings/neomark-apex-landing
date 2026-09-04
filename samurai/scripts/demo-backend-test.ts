@@ -1,6 +1,6 @@
 import { demoInvoke } from "../src/lib/demoBackend.ts";
 import { isSanctuaryPath, SANCTUARY_ABORT } from "../src/lib/sanctuary.ts";
-import type { AppFlags, ImmunityDb, Intercept, RepairOutcome, ScanReport } from "../src/lib/types.ts";
+import type { AppFlags, ImmunityDb, Intercept, RepairOutcome, ScanReport, WindowsLineStatus } from "../src/lib/types.ts";
 
 let failed = 0;
 let passed = 0;
@@ -245,6 +245,26 @@ async function run(): Promise<void> {
   check(released.includes("Ableton_Live_12.zip"), "RELEASE returns the drop to the original path");
   const afterRelease = await demoInvoke<Intercept[]>("get_intercepts");
   check(afterRelease.length === 0, "RELEASE clears the held intercept");
+
+  const windowsLine = await demoInvoke<WindowsLineStatus>("get_windows_line");
+  check(
+    windowsLine.summary.toLowerCase().includes("never downloads"),
+    "Windows line copy refuses to exclude Downloads",
+  );
+  check(
+    windowsLine.summary.toLowerCase().includes("real-time protection stays on"),
+    "Windows line copy keeps Defender real-time on",
+  );
+  check(!windowsLine.exclusionsAligned, "preview host is not claimed as Defender-aligned");
+  const align = await demoInvoke<string>("align_windows_line");
+  check(
+    align.toLowerCase().includes("never downloads"),
+    "ALIGN on a preview host still refuses Downloads exclusions",
+  );
+  check(
+    !align.toLowerCase().includes("disable"),
+    "ALIGN does not talk about disabling Defender",
+  );
 
   console.log(`${passed} passed, ${failed} failed`);
   if (failed > 0) {

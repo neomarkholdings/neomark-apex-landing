@@ -24,6 +24,22 @@ ClamAV signatures may still download on first scan (`freshclam`) so the installe
 
 Amoeba writes restore points as `{folder}/.amoeba_shadow/{filename}` for clean files under 8 MB. It never writes those copies inside protected folders.
 
+## Windows Defender (coexist, do not disable)
+
+Samurai does **not** turn off Microsoft Defender. Dual coverage is the point: Defender still scans Downloads and Desktop.
+
+What *does* fight the product on Windows is Defender locking or deleting a drop while Samurai is moving it into the install-gate vault, or quarantining `samurai.exe` because it relocated an executable.
+
+The NSIS installer (and the **ALIGN** control on the Windows line) asks Defender to skip **only**:
+
+- the Samurai program folder
+- bundled `yara.exe` / `clamscan.exe` / `freshclam.exe`
+- `%APPDATA%\com.roninsoftworx.samurai` and the `install_gate` vault
+
+It **never** excludes Downloads, Desktop, Music, or the whole disk. It **never** sets `DisableRealtimeMonitoring`. If real-time protection is already off, Samurai reports that and leaves Windows Security for the operator.
+
+ALIGN prompts UAC. Per-user installs without admin can use ALIGN from the console after setup.
+
 ## Code signing (removes SmartScreen / Gatekeeper warnings)
 
 Unsigned downloads work, but Windows SmartScreen and macOS Gatekeeper will warn. Signing is a **certificate purchase + GitHub secrets**. The build cannot invent a trusted identity.
@@ -131,7 +147,8 @@ npm test
 ## Product rules
 
 - Scan engines: local heuristic, **foothold hunt**, YARA, ClamAV (`clamscan`), and tshark protocol sampling. Results reduce to a **Threat Score (0–100)** and one sentence — raw terminal output never hits the UI.
-- **Install gate** watches Downloads and Desktop on the desktop app. Named crack/keygen/activator bait, **nested keygens inside `.zip` / `.rar` / `.7z` / SFX installers**, double-extension drops, and system binaries masquerading outside System32 are **moved into an install-gate vault** before they can run. Sample packs named `crackle` are left alone. Sanctuary (`/Music`, `/Studio-Projects`, `neomark`, `retroblazed`) is alert-only — never held, never rewritten. A false-positive hold can be **RELEASE**d back to the drop folder.
+- **Install gate** watches Downloads and Desktop (plus OneDrive Desktop/Downloads on Windows) on the desktop app. Named crack/keygen/activator bait, **nested keygens inside `.zip` / `.rar` / `.7z` / SFX installers**, double-extension drops, and system binaries masquerading outside System32 are **moved into an install-gate vault** before they can run. Sample packs named `crackle` are left alone. Sanctuary (`/Music`, `/Studio-Projects`, `neomark`, `retroblazed`) is alert-only — never held, never rewritten. A false-positive hold can be **RELEASE**d back to the drop folder. Holds retry when Windows Defender still has the file open.
+- **Windows line** asks Defender to ignore Samurai's own folders and engine processes so the two scanners do not deadlock. Defender real-time protection stays on. Downloads are never excluded.
 - **Foothold hunt** flags executables disguised as `.wav` / DAW projects, ransom-note filenames, and hostile autostart. It **reports** those hits. Content infections still restore from `.amoeba_shadow` outside sanctuary.
 - Amoeba restores from `{parent}/.amoeba_shadow/{file}` (and a Volume Shadow Copy hook on Windows). It does not “optimize” or alter creations. Foothold hits stay detect-only so a fake sample pack is never silently deleted from a session folder.
 - Streamer shield redacts paths and suppresses packet telemetry.

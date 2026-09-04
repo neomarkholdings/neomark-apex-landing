@@ -105,6 +105,23 @@ async function main() {
       await page.getByRole("button", { name: /^RELEASE$/ }).isDisabled(),
       "RELEASE stays disabled until the install gate holds a drop",
     );
+    check(idle.includes("WINDOWS LINE"), "idle chassis shows the Windows Defender line");
+    check(
+      idle.toLowerCase().includes("never downloads") ||
+        idle.toLowerCase().includes("never Downloads".toLowerCase()),
+      "Windows line copy refuses to exclude Downloads",
+    );
+    check(
+      await page.getByRole("button", { name: /^ALIGN$/ }).isVisible(),
+      "ALIGN is available to request Samurai-folder Defender exclusions",
+    );
+    await page.getByRole("button", { name: /^ALIGN$/ }).click();
+    const aligned = await page.locator("body").innerText();
+    check(
+      aligned.toLowerCase().includes("never downloads") ||
+        aligned.toLowerCase().includes("real-time protection stays on"),
+      "ALIGN on the preview host does not disable Defender",
+    );
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_idle.png`, fullPage: true });
 
     await page.getByRole("button", { name: /^BROWSE$/ }).click();
