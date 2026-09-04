@@ -56,6 +56,7 @@ async function startViteIfNeeded() {
   const child = spawn("npm", ["run", "dev"], {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     stdio: "pipe",
+    detached: true,
   });
   return child;
 }
@@ -181,10 +182,17 @@ async function main() {
     check(!allowed.includes("ERR_SANCTUARY_ZONE"), "unrelated paths do not sanctuary-abort");
     check(allowed.includes("No threats in the last scan"), "unrelated paths do not invent a lab antigen");
 
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_mobile.png`, fullPage: true });
+
     await browser.close();
   } finally {
-    if (vite) {
-      vite.kill("SIGTERM");
+    if (vite?.pid) {
+      try {
+        process.kill(-vite.pid, "SIGTERM");
+      } catch {
+        vite.kill("SIGTERM");
+      }
     }
   }
 
