@@ -28,6 +28,20 @@ rule Samurai_Selftest_Antigen
     condition:
         $a
 }
+
+rule Samurai_Ransom_Note_Text
+{
+    meta:
+        description = "Generic ransomware note phrases"
+        author = "Ronin Softworx"
+    strings:
+        $a = "your files have been encrypted" nocase
+        $b = "decrypt your files" nocase
+        $c = "send bitcoin" nocase
+        $d = "tor browser" nocase
+    condition:
+        2 of them
+}
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -502,6 +516,17 @@ fn command_for_tool(bin: &Path) -> Command {
     cmd
 }
 
+fn should_remediate(finding: &Finding) -> bool {
+    match finding.engine.as_str() {
+        "heuristic" => {
+            finding.detail.contains("Self-test antigen")
+                || finding.detail.contains("Known antigen hash")
+        }
+        "yara" | "clamav" => true,
+        _ => false,
+    }
+}
+
 fn file_has_finding(path: &Path, findings: &[Finding]) -> bool {
     findings.iter().any(|finding| {
         finding.path.as_ref().is_some_and(|shown| {
@@ -557,11 +582,28 @@ pub fn run_scan(
 
     let files = collect_files(&target, 400);
     let mut findings = heuristic_scan(&files, immunity_db, streamer_mode);
-    let mut statuses = vec![EngineStatus {
-        name: "heuristic".into(),
-        available: true,
-        summary: format!("Inspected {} file(s).", files.len()),
-    }];
+    let foothold_hits = crate::foothold::hunt_scan_files(&files, streamer_mode);
+    let host_hits = crate::foothold::hunt_host_persistence(streamer_mode);
+    let foothold_count = foothold_hits.len() + host_hits.len();
+    findings.extend(foothold_hits);
+    findings.extend(host_hits);
+
+    let mut statuses = vec![
+        EngineStatus {
+            name: "heuristic".into(),
+            available: true,
+            summary: format!("Inspected {} file(s).", files.len()),
+        },
+        EngineStatus {
+            name: "foothold".into(),
+            available: true,
+            summary: if foothold_count == 0 {
+                "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.".into()
+            } else {
+                format!("{foothold_count} creator-threat or persistence hit(s).")
+            },
+        },
+    ];
 
     let (yara_status, yara_hits) = run_yara(&target, data_dir, streamer_mode, tools_dir);
     statuses.push(yara_status);
@@ -577,19 +619,20 @@ pub fn run_scan(
 
     snapshot_clean_hosts(&files, &findings);
 
+    let remediable: Vec<&Finding> = findings.iter().filter(|f| should_remediate(f)).collect();
     let mut auto_actions = Vec::new();
     if is_sanctuary(&target) {
         auto_actions.push(RepairOutcome::SanctuaryAbort {
             path: redact_path(&target.to_string_lossy(), streamer_mode),
             message: ERR_SANCTUARY_ZONE.to_string(),
         });
-    } else if !findings.is_empty() {
+    } else if !remediable.is_empty() {
         // Repair uses real paths. When streamer mode redacted them, resolve via lab files.
         let candidates: Vec<PathBuf> = if streamer_mode {
             files
                 .iter()
                 .filter(|p| {
-                    findings.iter().any(|f| {
+                    remediable.iter().any(|f| {
                         f.path.as_ref().is_some_and(|shown| {
                             p.file_name()
                                 .map(|n| shown.ends_with(&*n.to_string_lossy()))
@@ -600,14 +643,14 @@ pub fn run_scan(
                 .cloned()
                 .collect()
         } else {
-            unique_finding_paths(&findings)
-                .into_iter()
-                .map(PathBuf::from)
-                .collect()
+            unique_finding_paths(&findings.iter().filter(|f| should_remediate(f)).cloned().collect::<Vec<_>>())
+            .into_iter()
+            .map(PathBuf::from)
+            .collect()
         };
 
         for path in candidates {
-            let engine_tag = findings
+            let engine_tag = remediable
                 .iter()
                 .find(|f| {
                     f.path.as_ref().is_some_and(|p| {
@@ -650,16 +693,35 @@ pub fn run_scan(
         score = score.saturating_sub(40).max(8);
     }
 
-    Ok(ScanReport {
-        threat_score: score,
-        synthesis: synthesize(
+    let foothold_only = !findings.is_empty()
+        && findings.iter().all(|finding| finding.engine == "foothold")
+        && repaired == 0
+        && awaiting == 0
+        && aborted == 0;
+    let synthesis = if foothold_only {
+        let core = "Foothold hunt flagged a creator-targeted drop. Inspect the table; Samurai will not rewrite sanctuary.";
+        if streamer_mode {
+            format!(
+                "{}, with streamer shield masking path readout.",
+                core.trim_end_matches('.')
+            )
+        } else {
+            core.to_string()
+        }
+    } else {
+        synthesize(
             score,
             findings.len(),
             repaired,
             awaiting,
             aborted,
             streamer_mode,
-        ),
+        )
+    };
+
+    Ok(ScanReport {
+        threat_score: score,
+        synthesis,
         band: band_from_score(score),
         findings,
         engine_statuses: statuses,
@@ -900,5 +962,84 @@ mod tests {
         let resolved = resolve_tool("yara", &engines).expect("bundled yara");
         assert_eq!(resolved, tool);
         assert!(resolve_tool("definitely-missing-samurai-bin", &engines).is_none());
+    }
+
+    #[test]
+    fn disguised_wav_is_reported_and_not_rewritten() {
+        let root = temp_lab("disguised");
+        let folder = root.join("Downloads");
+        fs::create_dir_all(&folder).unwrap();
+        let bait = folder.join("kick.wav.exe");
+        fs::write(&bait, b"MZ-fake-pack").unwrap();
+        let immunity = root.join("immunity_db.json");
+        let report = run_scan(
+            Some(folder.to_string_lossy().into_owned()),
+            false,
+            true,
+            &root,
+            &immunity,
+            &root.join("engines"),
+        )
+        .expect("disguised scan");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.engine == "foothold"
+                    && finding.detail.contains("Double-extension")),
+            "expected foothold hit, got {:?}",
+            report.findings
+        );
+        assert!(
+            report.auto_actions.is_empty(),
+            "foothold must not trigger Amoeba rewrite: {:?}",
+            report.auto_actions
+        );
+        assert_eq!(fs::read(&bait).unwrap(), b"MZ-fake-pack");
+        assert!(report.synthesis.contains("Foothold hunt"));
+        assert!(
+            report
+                .engine_statuses
+                .iter()
+                .any(|engine| engine.name == "foothold" && engine.available)
+        );
+    }
+
+    #[test]
+    fn sanctuary_reports_disguised_creation_without_touching_it() {
+        let root = temp_lab("music-pe");
+        let music = root.join("Music");
+        fs::create_dir_all(&music).unwrap();
+        let vocal = music.join("vocal.wav");
+        fs::write(&vocal, b"MZ\x90\x00not-a-riff").unwrap();
+        let immunity = root.join("immunity_db.json");
+        let report = run_scan(
+            Some(music.to_string_lossy().into_owned()),
+            false,
+            true,
+            &root,
+            &immunity,
+            &root.join("engines"),
+        )
+        .expect("sanctuary disguised scan");
+        assert!(
+            report.auto_actions.iter().any(|action| matches!(
+                action,
+                RepairOutcome::SanctuaryAbort { message, .. } if message == ERR_SANCTUARY_ZONE
+            )),
+            "expected sanctuary abort, got {:?}",
+            report.auto_actions
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.engine == "foothold"
+                    && finding.detail.contains("disguised")),
+            "expected disguised-creation finding, got {:?}",
+            report.findings
+        );
+        assert_eq!(fs::read(&vocal).unwrap(), b"MZ\x90\x00not-a-riff");
+        assert!(!music.join(".amoeba_shadow").exists());
     }
 }

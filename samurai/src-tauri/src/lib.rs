@@ -4,6 +4,7 @@
 //! commands. Destructive work is gated by sanctuary middleware.
 
 mod amoeba_engine;
+mod foothold;
 mod samurai_engine;
 mod sanctuary;
 

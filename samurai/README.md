@@ -130,8 +130,9 @@ npm test
 
 ## Product rules
 
-- Scan engines: YARA, ClamAV (`clamscan`), tshark protocol sampling, plus a local heuristic. Results are reduced to a **Threat Score (0–100)** and one sentence — raw terminal output never hits the UI.
-- Amoeba restores from `{parent}/.amoeba_shadow/{file}` (and a Volume Shadow Copy hook on Windows). It does not “optimize” or alter creations.
+- Scan engines: local heuristic, **foothold hunt**, YARA, ClamAV (`clamscan`), and tshark protocol sampling. Results reduce to a **Threat Score (0–100)** and one sentence — raw terminal output never hits the UI.
+- **Foothold hunt** is the creator-EDR layer Norton-style suites do not offer: it flags executables disguised as `.wav` / DAW projects, double-extension drops (`kick.wav.exe`), ransom-note filenames, and hostile autostart commands. It **reports** those hits. It does **not** quarantine, cloud-upload, or rewrite `/Music` or `/Studio-Projects`.
+- Amoeba restores from `{parent}/.amoeba_shadow/{file}` (and a Volume Shadow Copy hook on Windows). It does not “optimize” or alter creations. Foothold hits stay detect-only so a fake sample pack is never silently deleted from a session folder.
 - Streamer shield redacts paths and suppresses packet telemetry.
 - Any remediation targeting a sanctuary path aborts with:
 
