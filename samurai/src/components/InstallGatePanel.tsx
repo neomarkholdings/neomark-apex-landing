@@ -5,6 +5,7 @@ import type { Intercept } from "../lib/types";
 interface InstallGatePanelProps {
   liveWatch: boolean;
   intercepts: Intercept[];
+  rearmClock?: string | null;
   onToggle: () => void;
   onRelease: () => void;
 }
@@ -12,6 +13,7 @@ interface InstallGatePanelProps {
 export function InstallGatePanel({
   liveWatch,
   intercepts,
+  rearmClock,
   onToggle,
   onRelease,
 }: InstallGatePanelProps) {
@@ -22,7 +24,13 @@ export function InstallGatePanel({
       <SectionHead
         en="INSTALL GATE"
         jp="門"
-        meta={liveWatch ? "ARMED" : "STANDBY"}
+        meta={
+          liveWatch
+            ? "ARMED"
+            : rearmClock
+              ? `STANDBY · ${rearmClock}`
+              : "STANDBY"
+        }
       />
       {latest ? (
         <div className="lcd-face critical mb-3 rounded-[10px] px-3 py-2">
@@ -36,7 +44,7 @@ export function InstallGatePanel({
         <p className="mb-3 font-readout text-[12px] leading-relaxed text-silver/80">
           {liveWatch
             ? "On-write watch is armed on Downloads and Desktop. Named cracks, nested keygens inside DAW zips, and disguised drops are held before they can run."
-            : "Install gate is standing by. New drops will not be held automatically."}
+            : "Holds are paused. Sanctuary stays locked. New drops will not be moved to the vault until protection re-arms."}
         </p>
       )}
       <HardwareToggle

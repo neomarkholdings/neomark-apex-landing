@@ -1,5 +1,11 @@
 import { demoInvoke } from "../src/lib/demoBackend.ts";
 import { isSanctuaryPath, SANCTUARY_ABORT } from "../src/lib/sanctuary.ts";
+import {
+  DISARM_MS,
+  dueToRearm,
+  formatRearmClock,
+  rearmDeadline,
+} from "../src/lib/protection.ts";
 import type { AppFlags, ImmunityDb, Intercept, RepairOutcome, ScanReport, WindowsLineStatus } from "../src/lib/types.ts";
 
 let failed = 0;
@@ -197,8 +203,52 @@ async function run(): Promise<void> {
     (unarmed.intercepts ?? []).length === 0,
     "standby install gate does not hold the drop",
   );
+  const disarmedFlags = await demoInvoke<AppFlags>("get_app_state");
+  check(!disarmedFlags.liveWatch, "DISARM turns live watch off");
+  check(
+    typeof disarmedFlags.disarmedUntil === "number",
+    "DISARM sets a re-arm deadline",
+  );
+  check(
+    Math.abs((disarmedFlags.disarmedUntil ?? 0) - (Date.now() + DISARM_MS)) < 5_000,
+    "re-arm deadline is about fifteen minutes out",
+  );
+  const skippedLive = await demoInvoke<Intercept | null>("simulate_drop", {
+    path: "/tmp/Downloads/FLStudio-crack.exe",
+  });
+  check(skippedLive === null, "disarmed live drop is not held");
+  const sanctuaryWhileDisarmed = await demoInvoke<ScanReport>("run_samurai_scan", {
+    targetPath: "/Music",
+  });
+  check(
+    sanctuaryWhileDisarmed.autoActions.some(
+      (item) => item.kind === "sanctuary_abort" && item.message === SANCTUARY_ABORT,
+    ),
+    "sanctuary abort still fires while holds are paused",
+  );
 
   await demoInvoke("toggle_live_watch");
+  const rearmedFlags = await demoInvoke<AppFlags>("get_app_state");
+  check(rearmedFlags.liveWatch, "switching ON re-arms live watch");
+  check(
+    rearmedFlags.disarmedUntil == null,
+    "switching ON clears the re-arm deadline",
+  );
+
+  await demoInvoke("toggle_live_watch");
+  await demoInvoke("seed_demo_lab");
+  const seeded = await demoInvoke<AppFlags>("get_app_state");
+  check(seeded.liveWatch, "seeding the lab re-arms protection");
+  check(seeded.disarmedUntil == null, "seeding the lab clears the disarm timer");
+
+  check(rearmDeadline(1_000, true) === null, "armed sessions have no deadline");
+  check(rearmDeadline(0, false) === DISARM_MS, "disarm schedules fifteen minutes");
+  check(!dueToRearm(DISARM_MS - 1, false, DISARM_MS), "re-arm waits until the deadline");
+  check(dueToRearm(DISARM_MS, false, DISARM_MS), "re-arm fires at the deadline");
+  check(!dueToRearm(0, true, 0), "armed sessions do not auto-rearm");
+  check(formatRearmClock(0) === "0:00", "re-arm clock shows zero");
+  check(formatRearmClock(1_000) === "0:01", "re-arm clock formats seconds");
+  check(formatRearmClock(DISARM_MS) === "15:00", "re-arm clock formats fifteen minutes");
   const nested = await demoInvoke<ScanReport>("run_samurai_scan", {
     targetPath: "/tmp/Downloads/Ableton_Live_12.zip",
   });

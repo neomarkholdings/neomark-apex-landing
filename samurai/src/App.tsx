@@ -26,6 +26,7 @@ import {
   toggleStreamerMode,
 } from "./lib/api";
 import { bandFromScore } from "./lib/types";
+import { dueToRearm, formatRearmClock } from "./lib/protection";
 import type {
   AppFlags,
   Intercept,
@@ -37,22 +38,26 @@ import type {
 const IDLE_SYNTHESIS =
   "Protection is on. Run a scan to inspect a folder. Samurai will not rewrite your creations.";
 
-const IDLE_ENGINES = [
-  { name: "heuristic", available: true, summary: "Built-in file scanner" },
-  {
-    name: "foothold",
-    available: true,
-    summary: "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.",
-  },
-  {
-    name: "gate",
-    available: true,
-    summary: "Install gate armed: crack/keygen/RAT drops are held on write. Nested archives are inspected.",
-  },
-  { name: "yara", available: false, summary: "YARA is not installed" },
-  { name: "clamav", available: false, summary: "ClamAV is not installed" },
-  { name: "tshark", available: false, summary: "tshark is not installed" },
-];
+function idleEngines(liveWatch: boolean): ScanReport["engineStatuses"] {
+  return [
+    { name: "heuristic", available: true, summary: "Built-in file scanner" },
+    {
+      name: "foothold",
+      available: true,
+      summary: "Creator-threat hunt: disguised payloads, ransom notes, hostile autostart.",
+    },
+    {
+      name: "gate",
+      available: liveWatch,
+      summary: liveWatch
+        ? "Install gate armed: crack/keygen/RAT drops are held on write. Nested archives are inspected."
+        : "Install gate standby. Holds are paused.",
+    },
+    { name: "yara", available: false, summary: "YARA is not installed" },
+    { name: "clamav", available: false, summary: "ClamAV is not installed" },
+    { name: "tshark", available: false, summary: "tshark is not installed" },
+  ];
+}
 
 function resolveRepairPath(pending: RepairOutcome, labPath: string | null): string {
   if (!pending.path.startsWith("[STREAM-SHIELD]/")) {
@@ -65,13 +70,20 @@ function resolveRepairPath(pending: RepairOutcome, labPath: string | null): stri
   return `${labPath}/${basename}`;
 }
 
+const DISARMED_SYNTHESIS =
+  "Holds are paused. Sanctuary stays locked. Protection re-arms automatically.";
+
 function protectionLabel(
   scanning: boolean,
+  liveWatch: boolean,
   band: ScanReport["band"] | "nominal",
   gateHold: boolean,
 ): string {
   if (scanning) {
     return "SCANNING";
+  }
+  if (!liveWatch) {
+    return "DISARMED";
   }
   if (gateHold) {
     return "GATE HOLD";
@@ -95,6 +107,7 @@ export default function App() {
     amoebaAutoRepair: true,
     streamerMode: false,
     liveWatch: true,
+    disarmedUntil: null,
   });
   const [path, setPath] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -108,18 +121,31 @@ export default function App() {
   const [intercepts, setIntercepts] = useState<Intercept[]>([]);
   const [windowsLine, setWindowsLine] = useState<WindowsLineStatus | null>(null);
   const [aligning, setAligning] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const liveHeld = intercepts.some(
     (item) => item.kind === "held" || item.kind === "sanctuary_alert",
   );
-  const gateHold = liveHeld && !lastScanAt;
-  const score = report?.threatScore ?? (gateHold ? 72 : 0);
-  const band = gateHold ? "critical" : (report?.band ?? bandFromScore(score));
+  const gateHold = flags.liveWatch && liveHeld && !lastScanAt;
+  const disarmed = !flags.liveWatch;
+  const score =
+    report?.threatScore ?? (gateHold ? 72 : disarmed ? 38 : 0);
+  const band = disarmed
+    ? "caution"
+    : gateHold
+      ? "critical"
+      : (report?.band ?? bandFromScore(score));
   const synthesis =
     report?.synthesis ??
-    (gateHold
-      ? "Install gate held a high-risk drop before it could run. Creations were not rewritten."
-      : IDLE_SYNTHESIS);
+    (disarmed
+      ? DISARMED_SYNTHESIS
+      : gateHold
+        ? "Install gate held a high-risk drop before it could run. Creations were not rewritten."
+        : IDLE_SYNTHESIS);
+  const rearmClock =
+    disarmed && flags.disarmedUntil
+      ? formatRearmClock(flags.disarmedUntil - nowMs)
+      : null;
 
   const refreshImmunity = useCallback(async () => {
     const log = await getImmunityLog();
@@ -133,8 +159,8 @@ export default function App() {
 
     async function boot(): Promise<void> {
       try {
-        const state = await getAppState();
         const lab = await seedDemoLab();
+        const state = await getAppState();
         if (cancelled) {
           return;
         }
@@ -195,6 +221,24 @@ export default function App() {
       delete window.__SAMURAI_DEMO__;
     };
   }, [refreshImmunity]);
+
+  useEffect(() => {
+    if (flags.liveWatch) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const t = Date.now();
+      setNowMs(t);
+      if (dueToRearm(t, flags.liveWatch, flags.disarmedUntil ?? null)) {
+        void getAppState().then((state) => {
+          setFlags(state);
+        });
+      }
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [flags.liveWatch, flags.disarmedUntil]);
 
   const ingestReport = useCallback(
     async (next: ScanReport) => {
@@ -282,8 +326,9 @@ export default function App() {
   }
 
   async function handleLiveWatchToggle(): Promise<void> {
-    const value = await toggleLiveWatch();
-    setFlags((current) => ({ ...current, liveWatch: value }));
+    await toggleLiveWatch();
+    setFlags(await getAppState());
+    setNowMs(Date.now());
   }
 
   async function handleRelease(): Promise<void> {
@@ -333,11 +378,13 @@ export default function App() {
               </h1>
             </div>
             <div
-              className={`protect-pill ${scanning ? "is-scanning" : band}`}
+              className={`protect-pill ${
+                scanning ? "is-scanning" : disarmed ? "disarmed" : band
+              }`}
             >
-              <Led on silver={!scanning && band === "nominal"} />
+              <Led on silver={!scanning && !disarmed && band === "nominal"} />
               <span className="font-display text-[10px] tracking-[0.18em]">
-                {protectionLabel(scanning, band, gateHold)}
+                {protectionLabel(scanning, flags.liveWatch, band, gateHold)}
               </span>
             </div>
             <div className="status-lcd lcd-face">
@@ -359,6 +406,11 @@ export default function App() {
                 band={band}
                 synthesis={synthesis}
                 scanning={scanning}
+                liveWatch={flags.liveWatch}
+                rearmClock={rearmClock}
+                onToggle={() => {
+                  void handleLiveWatchToggle();
+                }}
               />
               <AmoebaVisualizer
                 repairing={repairing}
@@ -370,6 +422,7 @@ export default function App() {
               <InstallGatePanel
                 liveWatch={flags.liveWatch}
                 intercepts={intercepts}
+                rearmClock={rearmClock}
                 onToggle={() => {
                   void handleLiveWatchToggle();
                 }}
@@ -409,7 +462,7 @@ export default function App() {
                 pending={pending}
                 findings={report?.findings ?? []}
                 actions={report?.autoActions ?? []}
-                engines={report?.engineStatuses ?? IDLE_ENGINES}
+                engines={report?.engineStatuses ?? idleEngines(flags.liveWatch)}
                 scannedFiles={report?.scannedFiles ?? 0}
                 hasScanned={Boolean(lastScanAt)}
                 intercepts={intercepts}

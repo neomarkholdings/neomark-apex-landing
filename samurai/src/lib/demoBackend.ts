@@ -1,4 +1,5 @@
 import { isSanctuaryPath, SANCTUARY_ABORT } from "./sanctuary";
+import { dueToRearm, rearmDeadline } from "./protection";
 import { bandFromScore } from "./types";
 import type {
   Antigen,
@@ -25,12 +26,21 @@ const memory: DemoMemory = {
     amoebaAutoRepair: true,
     streamerMode: false,
     liveWatch: true,
+    disarmedUntil: null,
   },
   antigens: [],
   labPath: "/tmp/samurai-lab",
   taintedDirty: true,
   intercepts: [],
 };
+
+function maybeRearm(): void {
+  const now = Date.now();
+  if (dueToRearm(now, memory.flags.liveWatch, memory.flags.disarmedUntil ?? null)) {
+    memory.flags.liveWatch = true;
+    memory.flags.disarmedUntil = null;
+  }
+}
 
 function redact(path: string): string {
   if (!memory.flags.streamerMode) {
@@ -462,6 +472,7 @@ export async function demoInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
+  maybeRearm();
   switch (cmd) {
     case "get_app_state":
       return { ...memory.flags } as T;
@@ -471,9 +482,14 @@ export async function demoInvoke<T>(
     case "toggle_streamer_mode":
       memory.flags.streamerMode = !memory.flags.streamerMode;
       return memory.flags.streamerMode as T;
-    case "toggle_live_watch":
+    case "toggle_live_watch": {
       memory.flags.liveWatch = !memory.flags.liveWatch;
+      memory.flags.disarmedUntil = rearmDeadline(
+        Date.now(),
+        memory.flags.liveWatch,
+      );
       return memory.flags.liveWatch as T;
+    }
     case "get_intercepts":
       return memory.intercepts as T;
     case "simulate_drop": {
@@ -504,6 +520,8 @@ export async function demoInvoke<T>(
       memory.taintedDirty = true;
       memory.antigens = [];
       memory.intercepts = [];
+      memory.flags.liveWatch = true;
+      memory.flags.disarmedUntil = null;
       return memory.labPath as T;
     case "get_windows_line":
       return previewWindowsLine() as T;

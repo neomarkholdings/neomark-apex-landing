@@ -1,12 +1,16 @@
 import { bandLabel } from "../lib/types";
 import type { ThreatBand } from "../lib/types";
 import { DeckPanel, SectionHead } from "./Deck";
+import { HardwareToggle } from "./HardwareToggle";
 
 interface ThreatGaugeProps {
   score: number;
   band: ThreatBand;
   synthesis: string;
   scanning: boolean;
+  liveWatch: boolean;
+  rearmClock?: string | null;
+  onToggle: () => void;
 }
 
 function glowForBand(band: ThreatBand): string {
@@ -44,6 +48,9 @@ export function ThreatGauge({
   band,
   synthesis,
   scanning,
+  liveWatch,
+  rearmClock,
+  onToggle,
 }: ThreatGaugeProps) {
   const clamped = Math.max(0, Math.min(100, score));
   const start = -135;
@@ -54,7 +61,11 @@ export function ThreatGauge({
 
   return (
     <DeckPanel>
-      <SectionHead en="PROTECTION" jp="防御" meta={bandLabel(band)} />
+      <SectionHead
+        en="PROTECTION"
+        jp="防御"
+        meta={liveWatch ? bandLabel(band) : "DISARMED"}
+      />
       <div className="relative mx-auto flex w-full max-w-[220px] items-center justify-center">
         <svg viewBox="0 0 220 220" className="h-[200px] w-[200px]">
           <defs>
@@ -160,6 +171,24 @@ export function ThreatGauge({
         {scanning ? <div className="scan-sweep absolute inset-y-0 w-1/3" /> : null}
         <p className="relative font-readout text-[12px] leading-relaxed">{synthesis}</p>
       </div>
+      <div className="mt-3">
+        <HardwareToggle
+          checked={liveWatch}
+          onToggle={onToggle}
+          offLabel="DISARM"
+          onLabel="ON"
+          ariaLabel="Protection"
+        />
+      </div>
+      {!liveWatch && rearmClock ? (
+        <p className="mt-2 font-readout text-[12px] tracking-[0.12em] text-silver/80">
+          RE-ARM {rearmClock}
+        </p>
+      ) : (
+        <p className="mt-2 font-readout text-[11px] leading-relaxed text-silver/70">
+          Holds pause when disarmed. Sanctuary stays locked. Protection re-arms on a timer.
+        </p>
+      )}
     </DeckPanel>
   );
 }
