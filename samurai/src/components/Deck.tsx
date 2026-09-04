@@ -23,5 +23,11 @@ interface DeckPanelProps {
 }
 
 export function DeckPanel({ children, className = "" }: DeckPanelProps) {
-  return <section className={`deck-panel ${className}`}>{children}</section>;
+  return (
+    <section className={`deck-panel ${className}`}>
+      <span className="panel-rivet tl" aria-hidden="true" />
+      <span className="panel-rivet tr" aria-hidden="true" />
+      {children}
+    </section>
+  );
 }

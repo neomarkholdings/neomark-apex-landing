@@ -28,13 +28,13 @@ export function HardwareToggle({
         <span className={checked ? "opacity-40" : "text-chrome"}>{offLabel}</span>
         <span className={checked ? "text-blood-hot" : "opacity-40"}>{onLabel}</span>
       </div>
-      <div className="rocker-track relative h-11 overflow-hidden rounded-full">
+      <div className="rocker-track relative h-12 overflow-hidden rounded-full">
         <div
-          className={`rocker-knob absolute top-1 h-9 w-[46%] rounded-full transition-all duration-200 ${
+          className={`rocker-knob absolute top-1 h-10 w-[46%] rounded-full transition-all duration-200 ${
             checked ? "left-[52%]" : "left-1"
           }`}
         >
-          <span className="absolute inset-x-3 top-1 h-2 rounded-full bg-white/70" />
+          <span className="absolute inset-x-3 top-1 h-2.5 rounded-full bg-white/80" />
         </div>
         <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
           <Led on={checked} />

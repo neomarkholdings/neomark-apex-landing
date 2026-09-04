@@ -18,7 +18,8 @@ export function CreationsVault() {
               <p className="truncate font-readout text-xs text-chrome">{item.en}</p>
               <p className="font-jp text-[10px] text-blood-hot">{item.jp}</p>
             </div>
-            <span className="font-display text-[9px] tracking-[0.14em] text-silver/60">
+            <span className="lock-plate">
+              <span className="lock-glyph" aria-hidden="true" />
               LOCK
             </span>
           </li>

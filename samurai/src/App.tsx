@@ -4,7 +4,7 @@ import { CreationsVault } from "./components/CreationsVault";
 import { ScanConsole } from "./components/ScanConsole";
 import { StreamerPanel } from "./components/StreamerPanel";
 import { ThreatGauge } from "./components/ThreatGauge";
-import { Led, Screw } from "./components/HardwareBits";
+import { Led, Screw, Vent } from "./components/HardwareBits";
 import {
   amoebaRemediate,
   getAppState,
@@ -196,26 +196,35 @@ export default function App() {
         <Screw className="absolute bottom-3 right-3" />
 
         <div className="chassis-face">
-          <header className="relative z-[1] mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="font-display text-[10px] tracking-[0.32em] text-silver/60">
+          <header className="masthead">
+            <div className="brand-plate">
+              <p className="serial-stamp">MODEL SRX-01 · UNIT 侍-07</p>
+              <p className="font-display text-[10px] tracking-[0.32em] text-silver/70">
                 RONIN SOFTWORX
               </p>
               <h1 className="font-display text-2xl tracking-[0.18em] text-chrome">
                 SAMURAI <span className="text-blood-hot">サムライ</span>
               </h1>
             </div>
-            <div className="protect-pill">
-              <Led on={!scanning && band === "nominal"} silver={band === "nominal"} />
+            <div
+              className={`protect-pill ${scanning ? "is-scanning" : band}`}
+            >
+              <Led on silver={!scanning && band === "nominal"} />
               <span className="font-display text-[10px] tracking-[0.18em]">
                 {protectionLabel(scanning, band)}
               </span>
             </div>
-            <p className="font-readout text-[11px] tracking-[0.12em] text-silver/60">
-              SIGNATURES {immunityCount.toString().padStart(2, "0")}
-              {lastScanAt ? ` · LAST SCAN ${lastScanAt}` : " · NO SCAN YET"}
-            </p>
+            <div className="status-lcd lcd-face">
+              <p className="relative font-display text-[9px] tracking-[0.2em] text-silver/55">
+                TELEMETRY
+              </p>
+              <p className="relative font-readout text-[11px] tracking-[0.12em] text-silver/80">
+                SIGNATURES {immunityCount.toString().padStart(2, "0")}
+                {lastScanAt ? ` · LAST SCAN ${lastScanAt}` : " · NO SCAN YET"}
+              </p>
+            </div>
           </header>
+          <div className="blood-rule" aria-hidden="true" />
 
           <div className="av-grid">
             <div className="stack">
@@ -269,6 +278,12 @@ export default function App() {
               {error}
             </p>
           ) : null}
+
+          <footer className="chassis-foot">
+            <Vent slots={6} />
+            <p>NEOMARK HOLDINGS LLC · SANCTUARY LINE ARMED</p>
+            <Vent slots={6} />
+          </footer>
         </div>
       </div>
     </div>

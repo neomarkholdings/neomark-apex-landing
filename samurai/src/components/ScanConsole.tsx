@@ -1,6 +1,7 @@
 import { repairKindLabel } from "../lib/types";
-import type { EngineStatus, Finding, RepairOutcome } from "../lib/types";
+import type { EngineStatus, Finding, RepairOutcome, Severity } from "../lib/types";
 import { DeckPanel, SectionHead } from "./Deck";
+import { Led } from "./HardwareBits";
 
 interface ScanConsoleProps {
   path: string;
@@ -38,6 +39,23 @@ function engineTone(status: EngineStatus): string {
   return status.available ? "text-chrome" : "text-silver/40";
 }
 
+function severityClass(severity: Severity): string {
+  switch (severity) {
+    case "low":
+      return "sev-low";
+    case "medium":
+      return "sev-medium";
+    case "high":
+      return "sev-high";
+    case "critical":
+      return "sev-critical";
+    default: {
+      const exhaustive: never = severity;
+      return exhaustive;
+    }
+  }
+}
+
 export function ScanConsole({
   path,
   onPathChange,
@@ -66,8 +84,11 @@ export function ScanConsole({
           <span
             key={engine.name}
             title={engine.summary}
-            className={`rounded-full border border-white/10 px-2.5 py-1 font-readout text-[10px] tracking-[0.12em] ${engineTone(engine)}`}
+            className={`engine-chip font-readout text-[10px] tracking-[0.12em] ${engineTone(engine)} ${
+              engine.available ? "live" : ""
+            }`}
           >
+            <Led on={engine.available} silver={!engine.available} />
             {engine.name.toUpperCase()}
             {engine.available ? " ON" : " OFF"}
           </span>
@@ -138,16 +159,22 @@ export function ScanConsole({
       ) : null}
 
       <div className="well mt-3 flex-1">
-        <div className="threat-row font-display text-[9px] tracking-[0.16em] text-silver/50">
+        <div className="threat-row head font-display text-[9px] tracking-[0.16em] text-silver/50">
           <span>FILE</span>
           <span>ENGINE</span>
           <span>SEVERITY</span>
           <span>ACTION</span>
         </div>
         {findings.length === 0 ? (
-          <p className="px-3 py-8 text-center font-readout text-sm text-silver/55">
-            No threats in the last scan. Your files were not modified.
-          </p>
+          <div className="empty-sweep">
+            <span className="empty-mark">侍</span>
+            <p className="font-readout text-sm text-silver/70">
+              No threats in the last scan. Your files were not modified.
+            </p>
+            <p className="font-display text-[9px] tracking-[0.28em] text-silver/35">
+              CLEAN SWEEP
+            </p>
+          </div>
         ) : (
           findings.map((finding, index) => {
             const action = actionForFinding(finding, actions);
@@ -167,7 +194,10 @@ export function ScanConsole({
                 <p className="font-readout text-[11px] uppercase text-silver/80">
                   {finding.engine}
                 </p>
-                <p className="font-readout text-[11px] uppercase text-blood-hot">
+                <p
+                  className={`font-readout text-[11px] uppercase ${severityClass(finding.severity)}`}
+                >
+                  <span className="sev-pip" />
                   {finding.severity}
                 </p>
                 <p className="font-readout text-[11px] uppercase text-silver/80">

@@ -19,10 +19,14 @@ export function AmoebaVisualizer({
         jp="修復"
         meta={repairing ? "RESTORING" : autoRepair ? "AUTO-REPAIR" : "ASK FIRST"}
       />
-      <div className="well mb-3 flex items-center justify-center py-5">
+      <div className="well amoeba-tank mb-3 flex items-center justify-center">
         <div
           className={`amoeba-blob h-20 w-20 ${repairing ? "active" : ""}`}
           aria-label={repairing ? "Restoring files" : "Repair engine idle"}
+        />
+        <div
+          className={`amoeba-blob amoeba-sat ${repairing ? "active" : ""}`}
+          aria-hidden="true"
         />
       </div>
       <HardwareToggle
