@@ -268,6 +268,7 @@ export default function App() {
                 actions={report?.autoActions ?? []}
                 engines={report?.engineStatuses ?? IDLE_ENGINES}
                 scannedFiles={report?.scannedFiles ?? 0}
+                hasScanned={Boolean(lastScanAt)}
               />
               <CreationsVault />
             </div>

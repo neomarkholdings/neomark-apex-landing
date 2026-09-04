@@ -15,6 +15,7 @@ interface ScanConsoleProps {
   actions: RepairOutcome[];
   engines: EngineStatus[];
   scannedFiles: number;
+  hasScanned: boolean;
 }
 
 function actionForFinding(
@@ -68,6 +69,7 @@ export function ScanConsole({
   actions,
   engines,
   scannedFiles,
+  hasScanned,
 }: ScanConsoleProps) {
   const canRestore = pending?.kind === "awaiting_confirmation";
 
@@ -169,10 +171,12 @@ export function ScanConsole({
           <div className="empty-sweep">
             <span className="empty-mark">侍</span>
             <p className="font-readout text-sm text-silver/70">
-              No threats in the last scan. Your files were not modified.
+              {hasScanned
+                ? "No threats in the last scan. Your files were not modified."
+                : "Ready to inspect a folder. Samurai will not rewrite your creations."}
             </p>
             <p className="font-display text-[9px] tracking-[0.28em] text-silver/35">
-              CLEAN SWEEP
+              {hasScanned ? "CLEAN SWEEP" : "STANDBY"}
             </p>
           </div>
         ) : (

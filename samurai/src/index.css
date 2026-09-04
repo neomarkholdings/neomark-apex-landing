@@ -885,9 +885,9 @@ button[role="switch"]:focus-visible {
 .gauge-glass {
   pointer-events: none;
   position: absolute;
-  inset: 18% 22% 38%;
+  inset: 16% 24% 48%;
   border-radius: 50%;
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.22), transparent 46%);
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.16), transparent 52%);
 }
 
 @media (max-width: 800px) {
