@@ -6,7 +6,12 @@ import {
   formatRearmClock,
   rearmDeadline,
 } from "../src/lib/protection.ts";
-import type { AppFlags, ImmunityDb, Intercept, RepairOutcome, ScanReport, WindowsLineStatus } from "../src/lib/types.ts";
+import {
+  PREVIEW_RESIDENT_SUMMARY,
+  shouldRaiseConsoleOnHold,
+  trayTooltip,
+} from "../src/lib/resident.ts";
+import type { AppFlags, ImmunityDb, Intercept, RepairOutcome, ResidentStatus, ScanReport, WindowsLineStatus } from "../src/lib/types.ts";
 
 let failed = 0;
 let passed = 0;
@@ -315,6 +320,34 @@ async function run(): Promise<void> {
     !align.toLowerCase().includes("disable"),
     "ALIGN does not talk about disabling Defender",
   );
+
+  const resident = await demoInvoke<ResidentStatus>("get_resident");
+  check(!resident.tray, "preview host does not claim a live tray");
+  check(!resident.autostart, "preview autostart is off until armed");
+  check(
+    resident.summary === PREVIEW_RESIDENT_SUMMARY,
+    "resident copy says holds do not pop, toast, or steal focus",
+  );
+  const armedBoot = await demoInvoke<boolean>("toggle_autostart");
+  check(armedBoot, "AT BOOT can be armed from the console");
+  check(
+    (await demoInvoke<ResidentStatus>("get_resident")).autostart,
+    "AT BOOT state is visible on the resident status",
+  );
+  try {
+    await demoInvoke("hide_to_tray");
+    check(false, "SIT on the preview host should not pretend to hide");
+  } catch (sitError) {
+    check(
+      String(sitError).toLowerCase().includes("desktop app"),
+      "SIT explains that the tray is in the desktop app",
+    );
+  }
+  check(trayTooltip(0, true) === "Samurai · at rest", "idle tray tooltip stays quiet");
+  check(trayTooltip(1, true) === "Samurai · held a drop", "hold tooltip names the duty without shouting");
+  check(trayTooltip(2, true) === "Samurai · held 2 drops", "multiple holds stay a count, not a toast");
+  check(trayTooltip(1, false) === "Samurai · disarmed", "disarmed tray tooltip is honest");
+  check(!shouldRaiseConsoleOnHold(), "a hold never raises the console");
 
   console.log(`${passed} passed, ${failed} failed`);
   if (failed > 0) {

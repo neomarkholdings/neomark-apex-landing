@@ -122,6 +122,28 @@ async function main() {
         aligned.toLowerCase().includes("real-time protection stays on"),
       "ALIGN on the preview host does not disable Defender",
     );
+    check(aligned.includes("RESIDENT"), "idle chassis shows the resident tray line");
+    check(
+      aligned.toLowerCase().includes("do not pop") ||
+        aligned.toLowerCase().includes("steal focus") ||
+        aligned.toLowerCase().includes("taskbar"),
+      "resident copy stays quiet: no pop, toast, or focus steal",
+    );
+    check(
+      await page.getByRole("button", { name: /^SIT$/ }).isVisible(),
+      "SIT is available to send the console to the tray",
+    );
+    await page.getByRole("button", { name: /^SIT$/ }).click();
+    check(
+      (await page.locator("body").innerText()).includes("Tray is in the desktop app"),
+      "browser preview explains that SIT needs the desktop app",
+    );
+    await page.getByRole("switch", { name: "Start at boot" }).click();
+    check(
+      (await page.getByRole("switch", { name: "Start at boot" }).getAttribute("aria-checked")) ===
+        "true",
+      "AT BOOT rocker can be armed from the chassis",
+    );
     await page.screenshot({ path: `${SCREENSHOT_DIR}/samurai_av_idle.png`, fullPage: true });
 
     await page.getByRole("switch", { name: "Protection" }).click();

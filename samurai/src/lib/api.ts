@@ -8,6 +8,7 @@ import type {
   RepairOutcome,
   ScanReport,
   WindowsLineStatus,
+  ResidentStatus,
 } from "./types";
 
 export function isDesktopApp(): boolean {
@@ -97,6 +98,18 @@ export function getWindowsLine(): Promise<WindowsLineStatus> {
 
 export function alignWindowsLine(): Promise<string> {
   return callCommand<string>("align_windows_line");
+}
+
+export function getResident(): Promise<ResidentStatus> {
+  return callCommand<ResidentStatus>("get_resident");
+}
+
+export function toggleAutostart(): Promise<boolean> {
+  return callCommand<boolean>("toggle_autostart");
+}
+
+export function hideToTray(): Promise<void> {
+  return callCommand<void>("hide_to_tray");
 }
 
 export async function pickScanFolder(): Promise<string | null> {

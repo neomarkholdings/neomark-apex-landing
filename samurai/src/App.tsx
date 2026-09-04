@@ -3,6 +3,7 @@ import { AmoebaVisualizer } from "./components/AmoebaVisualizer";
 import { CreationsVault } from "./components/CreationsVault";
 import { ScanConsole } from "./components/ScanConsole";
 import { InstallGatePanel } from "./components/InstallGatePanel";
+import { ResidentPanel } from "./components/ResidentPanel";
 import { StreamerPanel } from "./components/StreamerPanel";
 import { ThreatGauge } from "./components/ThreatGauge";
 import { WindowsLinePanel } from "./components/WindowsLinePanel";
@@ -13,7 +14,9 @@ import {
   getAppState,
   getImmunityLog,
   getIntercepts,
+  getResident,
   getWindowsLine,
+  hideToTray,
   isDesktopApp,
   pickScanFolder,
   releaseIntercept,
@@ -22,6 +25,7 @@ import {
   simulateDrop,
   subscribeIntercepts,
   toggleAmoebaAutoRepair,
+  toggleAutostart,
   toggleLiveWatch,
   toggleStreamerMode,
 } from "./lib/api";
@@ -31,6 +35,7 @@ import type {
   AppFlags,
   Intercept,
   RepairOutcome,
+  ResidentStatus,
   ScanReport,
   WindowsLineStatus,
 } from "./lib/types";
@@ -120,6 +125,7 @@ export default function App() {
   const [lastScanAt, setLastScanAt] = useState<string | null>(null);
   const [intercepts, setIntercepts] = useState<Intercept[]>([]);
   const [windowsLine, setWindowsLine] = useState<WindowsLineStatus | null>(null);
+  const [resident, setResident] = useState<ResidentStatus | null>(null);
   const [aligning, setAligning] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -156,6 +162,7 @@ export default function App() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let timer: number | undefined;
+    let onVisible: (() => void) | undefined;
 
     async function boot(): Promise<void> {
       try {
@@ -176,6 +183,11 @@ export default function App() {
           return;
         }
         setWindowsLine(line);
+        const posture = await getResident();
+        if (cancelled) {
+          return;
+        }
+        setResident(posture);
         await refreshImmunity();
       } catch (bootError) {
         if (!cancelled) {
@@ -187,12 +199,32 @@ export default function App() {
         return;
       }
       timer = window.setInterval(() => {
+        if (document.hidden) {
+          return;
+        }
         void getIntercepts().then((held) => {
           if (!cancelled) {
             setIntercepts(held);
           }
         });
       }, 2000);
+      const refreshWhenVisible = (): void => {
+        if (document.hidden || cancelled) {
+          return;
+        }
+        void getIntercepts().then((held) => {
+          if (!cancelled) {
+            setIntercepts(held);
+          }
+        });
+        void getAppState().then((state) => {
+          if (!cancelled) {
+            setFlags(state);
+          }
+        });
+      };
+      onVisible = refreshWhenVisible;
+      document.addEventListener("visibilitychange", refreshWhenVisible);
       unlisten = await subscribeIntercepts((item) => {
         if (!cancelled) {
           setIntercepts((current) => [item, ...current].slice(0, 40));
@@ -217,6 +249,9 @@ export default function App() {
       if (timer !== undefined) {
         window.clearInterval(timer);
       }
+      if (onVisible) {
+        document.removeEventListener("visibilitychange", onVisible);
+      }
       unlisten?.();
       delete window.__SAMURAI_DEMO__;
     };
@@ -227,6 +262,9 @@ export default function App() {
       return;
     }
     const timer = window.setInterval(() => {
+      if (document.hidden) {
+        return;
+      }
       const t = Date.now();
       setNowMs(t);
       if (dueToRearm(t, flags.liveWatch, flags.disarmedUntil ?? null)) {
@@ -358,6 +396,25 @@ export default function App() {
     }
   }
 
+  async function handleAutostartToggle(): Promise<void> {
+    setError(null);
+    try {
+      await toggleAutostart();
+      setResident(await getResident());
+    } catch (bootError) {
+      setError(bootError instanceof Error ? bootError.message : String(bootError));
+    }
+  }
+
+  async function handleSit(): Promise<void> {
+    setError(null);
+    try {
+      await hideToTray();
+    } catch (sitError) {
+      setError(sitError instanceof Error ? sitError.message : String(sitError));
+    }
+  }
+
   return (
     <div className="stage">
       <div className="chassis">
@@ -428,6 +485,15 @@ export default function App() {
                 }}
                 onRelease={() => {
                   void handleRelease();
+                }}
+              />
+              <ResidentPanel
+                status={resident}
+                onToggleAutostart={() => {
+                  void handleAutostartToggle();
+                }}
+                onSit={() => {
+                  void handleSit();
                 }}
               />
               <WindowsLinePanel
