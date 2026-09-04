@@ -117,68 +117,68 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    let timer: number | undefined;
+
     async function boot(): Promise<void> {
       try {
-        const [state, lab, held] = await Promise.all([
-          getAppState(),
-          seedDemoLab(),
-          getIntercepts(),
-        ]);
+        const state = await getAppState();
+        const lab = await seedDemoLab();
         if (cancelled) {
           return;
         }
         setFlags(state);
         setLabPath(lab);
+        const held = await getIntercepts();
+        if (cancelled) {
+          return;
+        }
         setIntercepts(held);
         await refreshImmunity();
       } catch (bootError) {
         if (!cancelled) {
           setError(bootError instanceof Error ? bootError.message : String(bootError));
         }
+        return;
+      }
+      if (cancelled) {
+        return;
+      }
+      timer = window.setInterval(() => {
+        void getIntercepts().then((held) => {
+          if (!cancelled) {
+            setIntercepts(held);
+          }
+        });
+      }, 2000);
+      unlisten = await subscribeIntercepts((item) => {
+        if (!cancelled) {
+          setIntercepts((current) => [item, ...current].slice(0, 40));
+        }
+      });
+      if (!isDesktopApp()) {
+        window.__SAMURAI_DEMO__ = {
+          simulateDrop: async (path, innerNames) => {
+            const intercept = await simulateDrop(path, innerNames);
+            const held = await getIntercepts();
+            if (!cancelled) {
+              setIntercepts(held);
+            }
+            return intercept;
+          },
+        };
       }
     }
     void boot();
     return () => {
       cancelled = true;
-    };
-  }, [refreshImmunity]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    const timer = window.setInterval(() => {
-      void getIntercepts().then((held) => {
-        if (!cancelled) {
-          setIntercepts(held);
-        }
-      });
-    }, 2000);
-    void subscribeIntercepts((item) => {
-      if (!cancelled) {
-        setIntercepts((current) => [item, ...current].slice(0, 40));
+      if (timer !== undefined) {
+        window.clearInterval(timer);
       }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    if (!isDesktopApp()) {
-      window.__SAMURAI_DEMO__ = {
-        simulateDrop: async (path, innerNames) => {
-          const intercept = await simulateDrop(path, innerNames);
-          const held = await getIntercepts();
-          if (!cancelled) {
-            setIntercepts(held);
-          }
-          return intercept;
-        },
-      };
-    }
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
       unlisten?.();
       delete window.__SAMURAI_DEMO__;
     };
-  }, []);
+  }, [refreshImmunity]);
 
   const ingestReport = useCallback(
     async (next: ScanReport) => {

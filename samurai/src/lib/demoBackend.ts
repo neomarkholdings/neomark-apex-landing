@@ -476,13 +476,15 @@ export async function demoInvoke<T>(
       if (isSanctuaryPath(originalPath)) {
         throw new Error(SANCTUARY_ABORT);
       }
-      const match = memory.intercepts.find(
+      const matchCount = memory.intercepts.filter(
         (item) => item.holdPath === holdPath || item.originalPath === originalPath,
-      );
-      if (!match || match.kind !== "held") {
+      ).length;
+      if (matchCount === 0) {
         throw new Error("held drop is no longer in the install-gate vault");
       }
-      memory.intercepts = memory.intercepts.filter((item) => item !== match);
+      memory.intercepts = memory.intercepts.filter(
+        (item) => item.holdPath !== holdPath && item.originalPath !== originalPath,
+      );
       return originalPath as T;
     }
     case "seed_demo_lab":

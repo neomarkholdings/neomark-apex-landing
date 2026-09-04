@@ -137,7 +137,10 @@ fn release_intercept(
     }
     let dest = install_gate::release_held(Path::new(&hold_path), Path::new(&original_path))?;
     let mut log = state.intercepts.lock().unwrap_or_else(|e| e.into_inner());
-    log.retain(|item| item.hold_path.as_deref() != Some(hold_path.as_str()));
+    log.retain(|item| {
+      item.hold_path.as_deref() != Some(hold_path.as_str())
+        && item.original_path != original_path
+    });
     Ok(dest.to_string_lossy().into_owned())
 }
 
