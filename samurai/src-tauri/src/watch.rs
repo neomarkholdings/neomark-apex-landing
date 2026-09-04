@@ -3,8 +3,8 @@
 //! Polls Downloads / Desktop for new drops. Existing files at launch are
 //! inventoried, not held. `cargo test` never starts this thread.
 
+use crate::drop_watch::DropWatch;
 use crate::install_gate::{inspect_and_hold, is_incomplete_drop, watch_roots, Intercept};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -80,8 +80,7 @@ fn run(app: AppHandle) {
     let Some(hold_root) = hold_root else {
         return;
     };
-    let mut seen: HashMap<PathBuf, u128> = HashMap::new();
-    let mut primed = false;
+    let mut watch = DropWatch::new();
     loop {
         std::thread::sleep(Duration::from_millis(1600));
         if !live_watch_on(&app) {
@@ -96,23 +95,16 @@ fn run(app: AppHandle) {
                 let Some(stamp) = mtime_key(&path) else {
                     continue;
                 };
-                if !primed {
-                    seen.insert(path, stamp);
-                    continue;
-                }
-                if seen.get(&path) == Some(&stamp) {
-                    continue;
-                }
-                seen.insert(path.clone(), stamp);
-                if let Some(intercept) = inspect_and_hold(&path, &hold_root, streamer) {
-                    record_intercept(&app, intercept);
+                if watch.note(path.clone(), stamp) {
+                    if let Some(intercept) = inspect_and_hold(&path, &hold_root, streamer) {
+                        record_intercept(&app, intercept);
+                    }
                 }
             }
         }
-        primed = true;
-        if seen.len() > 4000 {
-            seen.clear();
-            primed = false;
+        if !watch.primed() {
+            watch.finish_prime();
         }
+        watch.maybe_reprime();
     }
 }

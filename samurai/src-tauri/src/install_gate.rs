@@ -120,6 +120,32 @@ pub fn inspect_and_hold(path: &Path, hold_root: &Path, streamer: bool) -> Option
     }
 }
 
+/// Put a held drop back. Never writes into sanctuary. Keeps the vault copy
+/// only if the restore copy fails.
+pub fn release_held(hold_path: &Path, original_path: &Path) -> Result<PathBuf, String> {
+    if is_sanctuary(original_path) {
+        return Err(crate::sanctuary::ERR_SANCTUARY_ZONE.to_string());
+    }
+    if !hold_path.is_file() {
+        return Err("held drop is no longer in the install-gate vault".into());
+    }
+    if let Some(parent) = original_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let dest = if original_path.exists() {
+        let stem = original_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "drop.bin".into());
+        original_path.with_file_name(format!("{stem}.released"))
+    } else {
+        original_path.to_path_buf()
+    };
+    fs::copy(hold_path, &dest).map_err(|e| e.to_string())?;
+    fs::remove_file(hold_path).map_err(|e| e.to_string())?;
+    Ok(dest)
+}
+
 pub fn hold_scan_files(
     files: &[PathBuf],
     hold_root: &Path,
@@ -191,5 +217,59 @@ mod tests {
         fs::write(&part, b"partial").unwrap();
         assert!(inspect_and_hold(&part, &vault, false).is_none());
         assert!(part.exists());
+    }
+
+    #[test]
+    fn holds_innocent_named_zip_when_inner_keygen_is_listed() {
+        let root = temp("nested");
+        let downloads = root.join("Downloads");
+        let vault = root.join("install_gate");
+        fs::create_dir_all(&downloads).unwrap();
+        let bait = downloads.join("Ableton_Live_12.zip");
+        fs::write(
+            &bait,
+            crate::archive::store_zip(&[
+                ("Ableton Live 12/Setup.exe", b"MZ-setup"),
+                ("Ableton Live 12/keygen.exe", b"MZ-loader"),
+            ]),
+        )
+        .unwrap();
+        let intercept = inspect_and_hold(&bait, &vault, false).expect("hold nested");
+        assert_eq!(intercept.kind, "held");
+        assert!(intercept.reason.contains("Archive contains a crack/keygen"));
+        assert!(!bait.exists());
+        let held = PathBuf::from(intercept.hold_path.unwrap());
+        assert!(held.exists());
+        let dest = downloads.join("Ableton_Live_12.zip");
+        let restored = release_held(&held, &dest).expect("release");
+        assert_eq!(restored, dest);
+        assert!(dest.exists());
+        assert!(!held.exists());
+    }
+
+    #[test]
+    fn does_not_hold_crackle_sample_pack_zip() {
+        let root = temp("crackle");
+        let vault = root.join("install_gate");
+        let pack = root.join("crackle-pack.zip");
+        fs::write(
+            &pack,
+            crate::archive::store_zip(&[("kick.wav", b"RIFF"), ("snare.wav", b"RIFF")]),
+        )
+        .unwrap();
+        assert!(inspect_and_hold(&pack, &vault, false).is_none());
+        assert!(pack.exists());
+    }
+
+    #[test]
+    fn release_refuses_sanctuary_destination() {
+        let root = temp("rel-sanc");
+        let vault = root.join("install_gate");
+        fs::create_dir_all(&vault).unwrap();
+        let held = vault.join("1__vocal.wav");
+        fs::write(&held, b"MZ").unwrap();
+        let err = release_held(&held, &root.join("Music").join("vocal.wav")).unwrap_err();
+        assert_eq!(err, crate::sanctuary::ERR_SANCTUARY_ZONE);
+        assert!(held.exists());
     }
 }

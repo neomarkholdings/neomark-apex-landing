@@ -4,6 +4,8 @@
 //! commands. Destructive work is gated by sanctuary middleware.
 
 mod amoeba_engine;
+mod archive;
+mod drop_watch;
 mod foothold;
 mod install_gate;
 mod samurai_engine;
@@ -15,8 +17,9 @@ use amoeba_engine::{
 };
 use install_gate::Intercept;
 use samurai_engine::ScanReport;
+use sanctuary::is_sanctuary_path;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 
@@ -124,6 +127,21 @@ fn get_intercepts(state: State<AppState>) -> Vec<Intercept> {
 }
 
 #[tauri::command]
+fn release_intercept(
+    state: State<AppState>,
+    hold_path: String,
+    original_path: String,
+) -> Result<String, String> {
+    if is_sanctuary_path(&original_path) {
+        return Err(crate::sanctuary::ERR_SANCTUARY_ZONE.to_string());
+    }
+    let dest = install_gate::release_held(Path::new(&hold_path), Path::new(&original_path))?;
+    let mut log = state.intercepts.lock().unwrap_or_else(|e| e.into_inner());
+    log.retain(|item| item.hold_path.as_deref() != Some(hold_path.as_str()));
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn run_samurai_scan(
     app: AppHandle,
     state: State<AppState>,
@@ -202,6 +220,7 @@ pub fn run() {
             toggle_streamer_mode,
             toggle_live_watch,
             get_intercepts,
+            release_intercept,
             run_samurai_scan,
             amoeba_remediate,
             get_immunity_log,
